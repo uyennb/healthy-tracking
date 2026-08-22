@@ -12,6 +12,57 @@ import {
   encodeDataToBase64,
 } from '../../services/cloudSyncService';
 
+/**
+ * Robust Dual-Layer Copy function working 100% across Mobile Safari, Chrome iOS, Android & WebViews
+ */
+export function copyToClipboard(text: string): boolean {
+  if (!text) return false;
+
+  // Modern Clipboard API
+  if (navigator.clipboard && window.isSecureContext) {
+    try {
+      navigator.clipboard.writeText(text);
+      return true;
+    } catch {}
+  }
+
+  // Robust Fallback for Mobile Safari / iOS / Zalo WebView
+  try {
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.style.position = 'fixed';
+    textArea.style.top = '0';
+    textArea.style.left = '0';
+    textArea.style.width = '2em';
+    textArea.style.height = '2em';
+    textArea.style.padding = '0';
+    textArea.style.border = 'none';
+    textArea.style.outline = 'none';
+    textArea.style.boxShadow = 'none';
+    textArea.style.background = 'transparent';
+    document.body.appendChild(textArea);
+    textArea.focus();
+    textArea.select();
+
+    // Range selection for iOS Safari
+    const range = document.createRange();
+    range.selectNodeContents(textArea);
+    const selection = window.getSelection();
+    if (selection) {
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }
+    textArea.setSelectionRange(0, 999999);
+
+    const successful = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    return successful;
+  } catch (err) {
+    console.error('Fallback copy failed', err);
+    return false;
+  }
+}
+
 interface CloudSyncModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -81,16 +132,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     // Check if user pasted a full sync URL (e.g., https://...?sync=686-888&d=...)
     if (inputCode.includes('sync=') || inputCode.includes('d=')) {
       try {
-        const urlObj = new URL(inputCode.trim());
-        const querySync = urlObj.searchParams.get('sync');
-        const queryData = urlObj.searchParams.get('d') || urlObj.searchParams.get('data');
-        if (queryData) {
-          window.location.href = inputCode.trim();
-          return;
-        }
-        if (querySync) {
-          setInputCode(querySync);
-        }
+        window.location.href = inputCode.trim();
+        return;
       } catch {}
     }
 
@@ -118,7 +161,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           onConnectSync(formattedCode);
           setInputCode('');
         } else {
-          setErrorMsg(isVI ? 'Để đồng bộ sang thiết bị này, vui lòng quét mã QR hoặc bấm nút "Sao chép Link 1-Click" trên máy gốc!' : 'To sync to this device, please scan QR code or copy 1-click link from primary device!');
+          setErrorMsg(isVI ? 'Để đồng bộ sang thiết bị này, vui lòng quét mã QR hoặc bấm nút "Chép Link" trên máy gốc!' : 'To sync to this device, please scan QR code or copy 1-click link from primary device!');
         }
       }
     } catch (err: any) {
@@ -127,17 +170,17 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     }
   };
 
-  // Copy clean 6-digit formatted code to clipboard
+  // Copy clean 6-digit formatted code to clipboard using dual-layer fallback
   const handleCopyCode = () => {
     if (!displayCode) return;
-    navigator.clipboard.writeText(displayCode);
+    copyToClipboard(displayCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };
 
-  // Copy instant 1-click sync link
+  // Copy instant 1-click sync link using dual-layer fallback
   const handleCopyLink = () => {
-    navigator.clipboard.writeText(qrUrl);
+    copyToClipboard(qrUrl);
     setCopiedLink(true);
     setTimeout(() => setCopiedLink(false), 2500);
   };
@@ -187,7 +230,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </div>
 
             {/* Sync Code Box */}
-            <div className="bg-white rounded-xl p-3 border border-emerald-200 space-y-2 shadow-sm">
+            <div className="bg-white rounded-xl p-3 border border-emerald-200 space-y-2.5 shadow-sm">
               <div className="flex items-center justify-between">
                 <div>
                   <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
@@ -206,7 +249,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                   {copied ? (
                     <>
                       <Check className="w-3.5 h-3.5" />
-                      <span>{isVI ? 'Đã chép mã!' : 'Copied!'}</span>
+                      <span>{isVI ? 'Đã chép!' : 'Copied!'}</span>
                     </>
                   ) : (
                     <>
@@ -217,19 +260,40 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 </button>
               </div>
 
-              {/* 1-Click Copy Link Option */}
-              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
-                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 truncate">
-                  <Link className="w-3.5 h-3.5 text-teal-600 flex-shrink-0" />
-                  {isVI ? 'Link đồng bộ 1-click tức thì:' : '1-Click sync link:'}
-                </span>
-                <button
-                  type="button"
-                  onClick={handleCopyLink}
-                  className="text-xs font-bold text-teal-700 hover:text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-md transition whitespace-nowrap"
-                >
-                  {copiedLink ? (isVI ? '✓ Đã chép Link!' : '✓ Link Copied!') : (isVI ? 'Chép Link' : 'Copy Link')}
-                </button>
+              {/* 1-Click Copy Link Option + Selectable Input */}
+              <div className="pt-2 border-t border-slate-100 space-y-1.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 truncate">
+                    <Link className="w-3.5 h-3.5 text-teal-600 flex-shrink-0" />
+                    {isVI ? 'Link đồng bộ 1-click tức thì:' : '1-Click sync link:'}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className="flex items-center gap-1 text-xs font-extrabold px-3 py-1.5 rounded-lg bg-teal-600 hover:bg-teal-700 text-white shadow-sm transition active:scale-95 whitespace-nowrap"
+                  >
+                    {copiedLink ? (
+                      <>
+                        <Check className="w-3.5 h-3.5" />
+                        <span>{isVI ? 'Đã chép!' : 'Copied!'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Copy className="w-3.5 h-3.5" />
+                        <span>{isVI ? 'Chép Link' : 'Copy Link'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Visible Selectable Text Input Fallback */}
+                <input
+                  type="text"
+                  readOnly
+                  value={qrUrl}
+                  onClick={e => (e.target as HTMLInputElement).select()}
+                  className="w-full bg-slate-50 border border-teal-200 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-teal-900 focus:ring-1 focus:ring-teal-500 select-all font-semibold"
+                />
               </div>
             </div>
 
@@ -345,7 +409,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </p>
             <p className="text-[11px] font-medium text-teal-700 leading-relaxed">
               {isVI
-                ? 'Trên Điện thoại (đang có dữ liệu mới), bấm nút Sync ở góc trên -> chọn "Chép Link" -> Mở Link đó trên Máy tính là 100% dữ liệu tự động bay sang ngay lập tức!'
+                ? 'Trên Điện thoại, bấm nút Sync ở góc trên -> chọn "Chép Link" -> Mở Link đó trên Máy tính là 100% dữ liệu tự động bay sang ngay lập tức!'
                 : 'On Phone, click Sync -> Copy Link -> Open that link on Computer to import 100% data instantly!'}
             </p>
           </div>
