@@ -3,7 +3,13 @@ import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldC
 import { QRCodeSVG } from 'qrcode.react';
 import { Language, DailyLog, UserProfile } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
-import { createCloudSyncObject, pushDataToCloud, fetchCloudData, formatDisplayCode } from '../../services/cloudSyncService';
+import {
+  generateNumericSyncCode,
+  formatDisplayCode,
+  normalizeSyncCode,
+  pushDataToCloud,
+  fetchCloudData,
+} from '../../services/cloudSyncService';
 
 interface CloudSyncModalProps {
   isOpen: boolean;
@@ -39,73 +45,75 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const isVI = language === 'vi';
   const displayCode = formatDisplayCode(syncCode);
 
-  // Handle generating a new sync code with fast REST API
+  // Handle generating a new 6-digit numeric sync code
   const handleGenerateNewCode = async () => {
     setIsConnecting(true);
     setErrorMsg('');
 
+    const newCode = generateNumericSyncCode(); // e.g. "686-888"
+
     try {
-      const result = await createCloudSyncObject(logs, profile);
+      const success = await pushDataToCloud(newCode, logs, profile);
       setIsConnecting(false);
 
-      if (result && result.id) {
-        onConnectSync(result.id);
+      if (success) {
+        onConnectSync(newCode);
       } else {
-        setErrorMsg(isVI ? 'Không thể kết nối máy chủ Cloud (Timeout 5s). Vui lòng thử lại.' : 'Failed to connect to Cloud server (Timeout 5s). Please try again.');
+        setErrorMsg(isVI ? 'Không thể tạo mã kết nối Cloud, vui lòng thử lại.' : 'Failed to generate sync code, please try again.');
       }
     } catch (err: any) {
       setIsConnecting(false);
-      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server connection error.'));
+      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server error.'));
     }
   };
 
-  // Handle connecting to an existing sync code
+  // Handle connecting to an existing 6-digit numeric sync code
   const handleConnectExistingCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = inputCode.trim().replace(/[^a-zA-Z0-9]/g, '');
-    if (!clean) {
-      setErrorMsg(isVI ? 'Vui lòng nhập mã kết nối hợp lệ.' : 'Please enter a valid sync code.');
+    const cleanDigits = normalizeSyncCode(inputCode);
+    if (!cleanDigits || cleanDigits.length !== 6) {
+      setErrorMsg(isVI ? 'Vui lòng nhập đủ 6 số kết nối (ví dụ: 686-888 hoặc 686888).' : 'Please enter a valid 6-digit sync code (e.g. 686-888).');
       return;
     }
+
+    const formattedCode = formatDisplayCode(cleanDigits);
 
     setIsConnecting(true);
     setErrorMsg('');
 
     try {
-      // Fetch existing remote data from Cloud REST endpoint
-      const remoteData = await fetchCloudData(clean);
+      const remoteData = await fetchCloudData(cleanDigits);
       setIsConnecting(false);
 
       if (remoteData && remoteData.logs) {
-        onConnectSync(clean, { logs: remoteData.logs, profile: remoteData.profile || profile });
+        onConnectSync(formattedCode, { logs: remoteData.logs, profile: remoteData.profile || profile });
         setInputCode('');
       } else {
-        // If code doesn't exist yet, try creating / pushing
-        const success = await pushDataToCloud(clean, logs, profile);
+        const success = await pushDataToCloud(cleanDigits, logs, profile);
         if (success) {
-          onConnectSync(clean);
+          onConnectSync(formattedCode);
           setInputCode('');
         } else {
-          setErrorMsg(isVI ? 'Không tìm thấy dữ liệu cho mã này trên Cloud.' : 'No data found for this code on Cloud.');
+          setErrorMsg(isVI ? 'Chưa tìm thấy dữ liệu cho mã 6 số này.' : 'No data found for this 6-digit code.');
         }
       }
     } catch (err: any) {
       setIsConnecting(false);
-      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server connection error.'));
+      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server error.'));
     }
   };
 
-  // Copy code to clipboard
+  // Copy clean 6-digit formatted code to clipboard
   const handleCopyCode = () => {
-    if (!syncCode) return;
-    navigator.clipboard.writeText(syncCode);
+    if (!displayCode) return;
+    navigator.clipboard.writeText(displayCode);
     setCopied(true);
     setTimeout(() => setCopied(false), 2500);
   };
 
   // Build sync URL for QR Code scanning
   const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const qrUrl = `${currentUrl}?sync=${encodeURIComponent(syncCode)}`;
+  const qrUrl = `${currentUrl}?sync=${encodeURIComponent(displayCode)}`;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
@@ -128,7 +136,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {isVI ? 'Đồng bộ Đám mây Tự động' : 'Automatic Cloud Sync'}
             </h3>
             <p className="text-xs text-slate-500 font-medium">
-              {isVI ? 'Đồng bộ 2 chiều thời gian thực giữa các thiết bị' : 'Real-time 2-way sync across all your devices'}
+              {isVI ? 'Mã 6 chữ số đơn giản - Kết nối trong 1 giây' : 'Simple 6-digit code - Real-time 2-way sync'}
             </p>
           </div>
         </div>
@@ -139,7 +147,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             <div className="flex items-center justify-between mb-2">
               <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-100/90 px-2.5 py-1 rounded-full">
                 <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping" />
-                {isVI ? 'Đang bật đồng bộ Realtime' : 'Realtime Sync Active'}
+                {isVI ? 'Đang kết nối Cloud' : 'Realtime Sync Active'}
               </span>
               <button
                 type="button"
@@ -155,9 +163,9 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             <div className="bg-white rounded-xl p-3 border border-emerald-200 flex items-center justify-between shadow-sm">
               <div>
                 <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  {isVI ? 'Mã kết nối của bạn' : 'Your Sync Code'}
+                  {isVI ? 'Mã 6 số của bạn' : 'Your 6-Digit Code'}
                 </span>
-                <span className="text-lg font-black text-emerald-700 tracking-wider font-mono">
+                <span className="text-2xl font-black text-emerald-700 tracking-wider font-mono">
                   {displayCode}
                 </span>
               </div>
@@ -196,7 +204,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             <div className="mt-3 pt-3 border-t border-emerald-200/60 flex items-center justify-between">
               <span className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1">
                 <ShieldCheck className="w-3.5 h-3.5" />
-                {isVI ? 'Dữ liệu tự động cập nhật liên tục 24/7' : 'Data auto syncs in realtime 24/7'}
+                {isVI ? 'Tự động đồng bộ 2 chiều 24/7' : 'Auto 2-way sync active'}
               </span>
               <button
                 type="button"
@@ -214,7 +222,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {isVI ? 'Chưa bật Đồng bộ Cloud' : 'Cloud Sync Not Active'}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              {isVI ? 'Tạo mã mới hoặc nhập mã từ thiết bị khác để kết nối' : 'Create a new code or enter an existing code to pair devices'}
+              {isVI ? 'Tạo mã 6 số mới hoặc nhập mã từ máy khác' : 'Generate a 6-digit code or enter code from another device'}
             </p>
           </div>
         )}
@@ -228,7 +236,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
         {/* Options to Connect */}
         <div className="space-y-4">
-          {/* Create New Code Button */}
+          {/* Create New 6-Digit Code Button */}
           <button
             type="button"
             disabled={isConnecting}
@@ -238,12 +246,12 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             {isConnecting ? (
               <>
                 <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>{isVI ? 'Đang tạo mã kết nối Cloud...' : 'Generating Cloud Sync Code...'}</span>
+                <span>{isVI ? 'Đang tạo mã 6 số...' : 'Generating 6-digit code...'}</span>
               </>
             ) : (
               <>
                 <Cloud className="w-4 h-4" />
-                <span>{isVI ? 'Tạo Mã Kết Nối Mới' : 'Generate New Sync Code'}</span>
+                <span>{isVI ? 'Tạo Mã 6 Số Mới (VD: 686-888)' : 'Generate New 6-Digit Code (e.g. 686-888)'}</span>
               </>
             )}
           </button>
@@ -259,15 +267,16 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           {/* Enter Existing Code Form */}
           <form onSubmit={handleConnectExistingCode} className="space-y-2">
             <label className="block text-xs font-bold text-slate-700">
-              {isVI ? 'Nhập mã kết nối từ máy khác:' : 'Enter code from another device:'}
+              {isVI ? 'Nhập mã 6 số từ máy khác:' : 'Enter 6-digit code from another device:'}
             </label>
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder={isVI ? 'Nhập hoặc dán mã kết nối...' : 'Paste sync code...'}
+                maxLength={8}
+                placeholder="VD: 686-888"
                 value={inputCode}
                 onChange={e => setInputCode(e.target.value)}
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold uppercase text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold uppercase text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-center tracking-widest"
               />
               <button
                 type="submit"

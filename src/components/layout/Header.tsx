@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatDisplayCode } from '../../services/cloudSyncService';
 import { Flame, User, Cloud, Zap } from 'lucide-react';
 import { UserProfile, Language } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
@@ -52,7 +53,7 @@ export const Header: React.FC<HeaderProps> = ({
               {syncCode ? (
                 <>
                   <Zap className="w-3.5 h-3.5 text-emerald-500 fill-emerald-500 animate-pulse" />
-                  <span className="font-mono text-[11px]">{syncCode}</span>
+                  <span className="font-mono text-[11px]">{formatDisplayCode(syncCode)}</span>
                 </>
               ) : (
                 <>
