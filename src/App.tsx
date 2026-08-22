@@ -27,7 +27,7 @@ import {
 import { filterLogsByPeriod, processChartData } from './utils/dateUtils';
 import { getTranslation } from './utils/i18n';
 import { format, subDays } from 'date-fns';
-import { BarChart3, LineChart as LineChartIcon, Table as TableIcon } from 'lucide-react';
+import { BarChart3, LineChart as LineChartIcon, Table as TableIcon, Database, Download } from 'lucide-react';
 
 export function App() {
   const [logs, setLogs] = useState<DailyLog[]>([]);
@@ -118,8 +118,6 @@ export function App() {
         logCount={logs.length}
         profile={profile}
         onOpenProfile={() => setActiveTab('profile')}
-        onOpenDataManagement={() => setIsDataModalOpen(true)}
-        onQuickReset={handleQuickReset}
         language={language}
         onChangeLanguage={handleChangeLanguage}
       />
@@ -133,6 +131,7 @@ export function App() {
             onSaveProfile={handleSaveProfile}
             language={language}
             onChangeLanguage={handleChangeLanguage}
+            onOpenDataManagement={() => setIsDataModalOpen(true)}
           />
         ) : (
           <>
@@ -274,6 +273,23 @@ export function App() {
                 />
               </div>
             )}
+
+            {/* Data Management Footer Card */}
+            <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-slate-100 mt-4 mb-2 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Database className="w-4 h-4 text-emerald-600" />
+                <span className="font-extrabold text-slate-800 text-xs">
+                  {language === 'vi' ? 'Quản lý Dữ liệu App (Xuất CSV/JSON)' : 'App Data Management (CSV/JSON)'}
+                </span>
+              </div>
+              <button
+                onClick={() => setIsDataModalOpen(true)}
+                className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition active:scale-95"
+              >
+                <Download className="w-3.5 h-3.5 text-emerald-600" />
+                <span>{t.navData}</span>
+              </button>
+            </div>
           </>
         )}
       </main>
