@@ -11,18 +11,22 @@ import {
   Tooltip,
   Legend,
 } from 'recharts';
-import { DisplayMode, AggregatedData } from '../../types/health';
+import { DisplayMode, AggregatedData, Language } from '../../types/health';
+import { getTranslation } from '../../utils/i18n';
 
 interface WorkoutChartProps {
   data: AggregatedData[];
   mode: DisplayMode;
+  language?: Language;
 }
 
-export const WorkoutChart: React.FC<WorkoutChartProps> = ({ data, mode }) => {
+export const WorkoutChart: React.FC<WorkoutChartProps> = ({ data, mode, language = 'vi' }) => {
+  const t = getTranslation(language);
+
   if (data.length === 0) {
     return (
       <div className="h-64 flex items-center justify-center text-slate-400 text-xs font-medium bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-        Không có dữ liệu trong khoảng thời gian đã chọn
+        {t.tableEmpty}
       </div>
     );
   }
@@ -40,7 +44,7 @@ export const WorkoutChart: React.FC<WorkoutChartProps> = ({ data, mode }) => {
                   {p.name}:
                 </span>
                 <span className="font-extrabold">
-                  {p.value} {p.dataKey === 'workoutDuration' ? 'phút' : 'kcal'}
+                  {p.value} {p.dataKey === 'workoutDuration' ? t.unitMin : 'kcal'}
                 </span>
               </div>
             ))}
@@ -51,15 +55,17 @@ export const WorkoutChart: React.FC<WorkoutChartProps> = ({ data, mode }) => {
     return null;
   };
 
+  const minUnit = language === 'vi' ? ' p' : ' m';
+
   return (
     <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 mb-4">
       <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="font-extrabold text-slate-800 text-sm">
-            Biểu Đồ Theo Dõi Luyện Tập
+            {t.chartWorkoutTitle}
           </h3>
           <p className="text-[11px] text-slate-400 font-medium">
-            Thời gian luyện tập (phút - trục trái) & Calo đốt bài tập (kcal - trục phải)
+            {t.chartWorkoutSub}
           </p>
         </div>
       </div>
@@ -70,23 +76,23 @@ export const WorkoutChart: React.FC<WorkoutChartProps> = ({ data, mode }) => {
             <BarChart data={data} margin={{ top: 10, right: 15, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={{ stroke: '#e2e8f0' }} />
-              <YAxis yAxisId="left" unit=" p" tick={{ fontSize: 10, fill: '#8b5cf6' }} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="left" unit={minUnit} tick={{ fontSize: 10, fill: '#8b5cf6' }} axisLine={false} tickLine={false} />
               <YAxis yAxisId="right" orientation="right" unit=" kcal" tick={{ fontSize: 10, fill: '#06b6d4' }} axisLine={false} tickLine={false} />
               <Tooltip content={<CustomTooltip />} />
               <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '11px', fontWeight: 600 }} />
-              <Bar yAxisId="left" dataKey="workoutDuration" name="Thời gian tập (phút)" fill="#8b5cf6" radius={[4, 4, 0, 0]} />
-              <Bar yAxisId="right" dataKey="workoutCalo" name="Calo bài tập (kcal)" fill="#06b6d4" radius={[4, 4, 0, 0]} />
+              <Bar yAxisId="left" dataKey="workoutDuration" name={t.legendWorkoutDuration} fill="#8b5cf6" radius={[4, 4, 0, 0]} />
+              <Bar yAxisId="right" dataKey="workoutCalo" name={t.legendWorkoutCalo} fill="#06b6d4" radius={[4, 4, 0, 0]} />
             </BarChart>
           ) : (
             <LineChart data={data} margin={{ top: 10, right: 15, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
               <XAxis dataKey="label" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={{ stroke: '#e2e8f0' }} />
-              <YAxis yAxisId="left" unit=" p" tick={{ fontSize: 10, fill: '#8b5cf6' }} axisLine={false} tickLine={false} />
+              <YAxis yAxisId="left" unit={minUnit} tick={{ fontSize: 10, fill: '#8b5cf6' }} axisLine={false} tickLine={false} />
               <YAxis yAxisId="right" orientation="right" unit=" kcal" tick={{ fontSize: 10, fill: '#06b6d4' }} axisLine={false} tickLine={false} />
               <Tooltip content={<CustomTooltip />} />
               <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '11px', fontWeight: 600 }} />
-              <Line yAxisId="left" type="monotone" dataKey="workoutDuration" name="Thời gian tập (phút)" stroke="#8b5cf6" strokeWidth={3} dot={{ r: 4 }} />
-              <Line yAxisId="right" type="monotone" dataKey="workoutCalo" name="Calo bài tập (kcal)" stroke="#06b6d4" strokeWidth={3} dot={{ r: 4 }} />
+              <Line yAxisId="left" type="monotone" dataKey="workoutDuration" name={t.legendWorkoutDuration} stroke="#8b5cf6" strokeWidth={3} dot={{ r: 4 }} />
+              <Line yAxisId="right" type="monotone" dataKey="workoutCalo" name={t.legendWorkoutCalo} stroke="#06b6d4" strokeWidth={3} dot={{ r: 4 }} />
             </LineChart>
           )}
         </ResponsiveContainer>

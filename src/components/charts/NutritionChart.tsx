@@ -11,18 +11,22 @@ import {
   Tooltip,
   Legend,
 } from 'recharts';
-import { DisplayMode, AggregatedData } from '../../types/health';
+import { DisplayMode, AggregatedData, Language } from '../../types/health';
+import { getTranslation } from '../../utils/i18n';
 
 interface NutritionChartProps {
   data: AggregatedData[];
   mode: DisplayMode;
+  language?: Language;
 }
 
-export const NutritionChart: React.FC<NutritionChartProps> = ({ data, mode }) => {
+export const NutritionChart: React.FC<NutritionChartProps> = ({ data, mode, language = 'vi' }) => {
+  const t = getTranslation(language);
+
   if (data.length === 0) {
     return (
       <div className="h-64 flex items-center justify-center text-slate-400 text-xs font-medium bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-        Không có dữ liệu trong khoảng thời gian đã chọn
+        {t.tableEmpty}
       </div>
     );
   }
@@ -54,10 +58,10 @@ export const NutritionChart: React.FC<NutritionChartProps> = ({ data, mode }) =>
       <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="font-extrabold text-slate-800 text-sm">
-            Biểu Đồ So Sánh Các Chất Dinh Dưỡng
+            {t.chartNutritionTitle}
           </h3>
           <p className="text-[11px] text-slate-400 font-medium">
-            Protein (Đạm), Carbs (Tinh bột), Fats (Chất béo), Fiber (Chất xơ)
+            {t.chartNutritionSub}
           </p>
         </div>
       </div>

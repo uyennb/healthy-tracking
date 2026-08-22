@@ -251,17 +251,17 @@ export function App() {
 
                 {/* Group 1: Nutrition breakdown chart */}
                 {(chartCategory === 'all' || chartCategory === 'nutrition') && (
-                  <NutritionChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} />
+                  <NutritionChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} language={language} />
                 )}
 
                 {/* Group 2: Calo-In vs Calo-Out (TDEE) chart */}
                 {(chartCategory === 'all' || chartCategory === 'energy') && (
-                  <EnergyBalanceChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} />
+                  <EnergyBalanceChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} language={language} />
                 )}
 
                 {/* Group 3: Workout duration & calories burned chart */}
                 {(chartCategory === 'all' || chartCategory === 'workout') && (
-                  <WorkoutChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} />
+                  <WorkoutChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} language={language} />
                 )}
 
                 {/* Detailed Data Table inside Dashboard View */}

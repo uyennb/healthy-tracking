@@ -11,21 +11,27 @@ import {
   Tooltip,
   Legend,
 } from 'recharts';
-import { DisplayMode, AggregatedData } from '../../types/health';
+import { DisplayMode, AggregatedData, Language } from '../../types/health';
+import { getTranslation } from '../../utils/i18n';
 
 interface EnergyBalanceChartProps {
   data: AggregatedData[];
   mode: DisplayMode;
+  language?: Language;
 }
 
-export const EnergyBalanceChart: React.FC<EnergyBalanceChartProps> = ({ data, mode }) => {
+export const EnergyBalanceChart: React.FC<EnergyBalanceChartProps> = ({ data, mode, language = 'vi' }) => {
+  const t = getTranslation(language);
+
   if (data.length === 0) {
     return (
       <div className="h-64 flex items-center justify-center text-slate-400 text-xs font-medium bg-slate-50 rounded-2xl border border-dashed border-slate-200">
-        Không có dữ liệu trong khoảng thời gian đã chọn
+        {t.tableEmpty}
       </div>
     );
   }
+
+  const numLoc = language === 'vi' ? 'vi-VN' : 'en-US';
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
@@ -33,22 +39,26 @@ export const EnergyBalanceChart: React.FC<EnergyBalanceChartProps> = ({ data, mo
       const caloOut = payload.find((p: any) => p.dataKey === 'caloOut')?.value || 0;
       const diff = caloIn - caloOut;
 
+      const diffText = diff <= 0
+        ? t.deficitText.replace('{amount}', String(Math.abs(diff)))
+        : t.surplusText.replace('{amount}', String(diff));
+
       return (
         <div className="bg-slate-900/90 backdrop-blur-md text-white text-xs p-3 rounded-xl shadow-xl border border-slate-700/50">
           <p className="font-bold text-slate-300 mb-1.5 border-b border-slate-700/80 pb-1">{label}</p>
           <div className="space-y-1 font-medium">
             <div className="flex items-center justify-between gap-4">
-              <span className="text-indigo-400">Calo Nạp Vẫn (Calo-In):</span>
-              <span className="font-extrabold">{caloIn.toLocaleString('vi-VN')} kcal</span>
+              <span className="text-indigo-400">{t.legendCaloIn}:</span>
+              <span className="font-extrabold">{caloIn.toLocaleString(numLoc)} kcal</span>
             </div>
             <div className="flex items-center justify-between gap-4">
-              <span className="text-rose-400">Calo Tiêu Thụ (TDEE):</span>
-              <span className="font-extrabold">{caloOut.toLocaleString('vi-VN')} kcal</span>
+              <span className="text-rose-400">{t.legendCaloOut}:</span>
+              <span className="font-extrabold">{caloOut.toLocaleString(numLoc)} kcal</span>
             </div>
             <div className="pt-1.5 border-t border-slate-700/80 flex items-center justify-between gap-4">
-              <span>Chênh lệch (Net):</span>
+              <span>{t.netBalance}:</span>
               <span className={`font-black ${diff <= 0 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                {diff <= 0 ? `Thâm hụt ${Math.abs(diff)} kcal` : `Dư thừa +${diff} kcal`}
+                {diffText}
               </span>
             </div>
           </div>
@@ -63,10 +73,10 @@ export const EnergyBalanceChart: React.FC<EnergyBalanceChartProps> = ({ data, mo
       <div className="flex items-center justify-between mb-3">
         <div>
           <h3 className="font-extrabold text-slate-800 text-sm">
-            Biểu Đồ So Sánh Calo-In vs Calo-Out (TDEE)
+            {t.chartEnergyTitle}
           </h3>
           <p className="text-[11px] text-slate-400 font-medium">
-            Theo dõi sự cân bằng năng lượng và mức thâm hụt calo hàng ngày
+            {t.chartEnergySub}
           </p>
         </div>
       </div>
@@ -80,8 +90,8 @@ export const EnergyBalanceChart: React.FC<EnergyBalanceChartProps> = ({ data, mo
               <YAxis unit=" kcal" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
               <Tooltip content={<CustomTooltip />} />
               <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '11px', fontWeight: 600 }} />
-              <Bar dataKey="caloIn" name="Calo Nạp Vẫn (In)" fill="#6366f1" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="caloOut" name="Calo Tiêu Thụ (TDEE Out)" fill="#f43f5e" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="caloIn" name={t.legendCaloIn} fill="#6366f1" radius={[4, 4, 0, 0]} />
+              <Bar dataKey="caloOut" name={t.legendCaloOut} fill="#f43f5e" radius={[4, 4, 0, 0]} />
             </BarChart>
           ) : (
             <LineChart data={data} margin={{ top: 10, right: 10, left: 15, bottom: 0 }}>
@@ -90,8 +100,8 @@ export const EnergyBalanceChart: React.FC<EnergyBalanceChartProps> = ({ data, mo
               <YAxis unit=" kcal" tick={{ fontSize: 10, fill: '#64748b' }} axisLine={false} tickLine={false} />
               <Tooltip content={<CustomTooltip />} />
               <Legend verticalAlign="top" height={36} wrapperStyle={{ fontSize: '11px', fontWeight: 600 }} />
-              <Line type="monotone" dataKey="caloIn" name="Calo Nạp Vẫn (In)" stroke="#6366f1" strokeWidth={3} dot={{ r: 4 }} />
-              <Line type="monotone" dataKey="caloOut" name="Calo Tiêu Thụ (TDEE Out)" stroke="#f43f5e" strokeWidth={3} dot={{ r: 4 }} />
+              <Line type="monotone" dataKey="caloIn" name={t.legendCaloIn} stroke="#6366f1" strokeWidth={3} dot={{ r: 4 }} />
+              <Line type="monotone" dataKey="caloOut" name={t.legendCaloOut} stroke="#f43f5e" strokeWidth={3} dot={{ r: 4 }} />
             </LineChart>
           )}
         </ResponsiveContainer>

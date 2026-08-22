@@ -67,13 +67,17 @@ export const translations = {
     editTooltip: 'Chỉnh sửa',
     deleteTooltip: 'Xóa',
 
-    // Chart Titles
+    // Chart Titles & Legends
     chartNutritionTitle: 'Biểu Đồ So Sánh Các Chất Dinh Dưỡng',
     chartNutritionSub: 'Protein (Đạm), Carbs (Tinh bột), Fats (Chất béo), Fiber (Chất xơ)',
     chartEnergyTitle: 'Biểu Đồ So Sánh Calo-In vs Calo-Out (TDEE)',
     chartEnergySub: 'Theo dõi sự cân bằng năng lượng và mức thâm hụt calo hàng ngày',
     chartWorkoutTitle: 'Biểu Đồ Theo Dõi Luyện Tập',
     chartWorkoutSub: 'Thời gian luyện tập (phút - trục trái) & Calo đốt bài tập (kcal - trục phải)',
+    legendCaloIn: 'Calo Nạp Vào (In)',
+    legendCaloOut: 'Calo Tiêu Thụ (TDEE Out)',
+    legendWorkoutDuration: 'Thời gian tập (phút)',
+    legendWorkoutCalo: 'Calo bài tập (kcal)',
 
     // Form & Daily Log Modal
     addLogTitle: 'Nhập Chỉ Số Hàng Ngày',
@@ -194,13 +198,17 @@ export const translations = {
     editTooltip: 'Edit',
     deleteTooltip: 'Delete',
 
-    // Chart Titles
+    // Chart Titles & Legends
     chartNutritionTitle: 'Nutrient Breakdown Comparison',
     chartNutritionSub: 'Protein, Carbs, Fats, Fiber',
     chartEnergyTitle: 'Calorie Intake vs Calorie Expenditure (TDEE)',
     chartEnergySub: 'Track daily energy balance & calorie deficit/surplus',
     chartWorkoutTitle: 'Workout Duration & Calories Burned',
     chartWorkoutSub: 'Workout duration (min - left axis) & Exercise calories (kcal - right axis)',
+    legendCaloIn: 'Calorie Intake (In)',
+    legendCaloOut: 'Calorie Expenditure (TDEE Out)',
+    legendWorkoutDuration: 'Workout Duration (min)',
+    legendWorkoutCalo: 'Exercise Calories (kcal)',
 
     // Form & Daily Log Modal
     addLogTitle: 'Add Daily Metrics',
