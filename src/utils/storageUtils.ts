@@ -17,24 +17,41 @@ export const DEFAULT_GOALS: UserGoals = {
   targetWorkoutMinutes: 45,
 };
 
+const REAL_DATA_MIGRATION_KEY = 'nutrifit_migrated_v3_real_8days';
+
 export function getStoredLogs(): DailyLog[] {
   try {
+    const isMigrated = localStorage.getItem(REAL_DATA_MIGRATION_KEY);
+    if (!isMigrated) {
+      const realLogs = generateSampleData(8);
+      // Ensure 2026-08-22 is removed
+      const cleanRealLogs = realLogs.filter(l => l.date !== '2026-08-22');
+      saveLogs(cleanRealLogs);
+      localStorage.setItem(REAL_DATA_MIGRATION_KEY, 'true');
+      return cleanRealLogs;
+    }
+
     const raw = localStorage.getItem(LOGS_STORAGE_KEY);
     if (!raw) {
-      const realLogs = generateSampleData(8);
+      const realLogs = generateSampleData(8).filter(l => l.date !== '2026-08-22');
       saveLogs(realLogs);
       return realLogs;
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed.sort((a, b) => b.date.localeCompare(a.date));
+      // Remove any sample 2026-08-22 log
+      const filtered = parsed.filter((l: DailyLog) => l.date !== '2026-08-22');
+      if (filtered.length !== parsed.length) {
+        saveLogs(filtered);
+      }
+      return filtered.sort((a: DailyLog, b: DailyLog) => b.date.localeCompare(a.date));
     }
-    const realLogs = generateSampleData(8);
+    const realLogs = generateSampleData(8).filter(l => l.date !== '2026-08-22');
     saveLogs(realLogs);
     return realLogs;
   } catch (err) {
     console.error('Error reading logs from LocalStorage', err);
-    return generateSampleData(8);
+    return generateSampleData(8).filter(l => l.date !== '2026-08-22');
   }
 }
 
