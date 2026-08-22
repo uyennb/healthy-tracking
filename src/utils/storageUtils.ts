@@ -21,17 +21,20 @@ export function getStoredLogs(): DailyLog[] {
   try {
     const raw = localStorage.getItem(LOGS_STORAGE_KEY);
     if (!raw) {
-      saveLogs([]);
-      return [];
+      const realLogs = generateSampleData(8);
+      saveLogs(realLogs);
+      return realLogs;
     }
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed)) {
-      return parsed.sort((a, b) => b.date.localeCompare(a.date)); // descending by date
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed.sort((a, b) => b.date.localeCompare(a.date));
     }
-    return [];
+    const realLogs = generateSampleData(8);
+    saveLogs(realLogs);
+    return realLogs;
   } catch (err) {
     console.error('Error reading logs from LocalStorage', err);
-    return [];
+    return generateSampleData(8);
   }
 }
 
