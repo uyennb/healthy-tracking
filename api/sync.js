@@ -1,5 +1,5 @@
 // Vercel Serverless Function for NutriFit 6-Digit Realtime Cloud Sync
-const memoryStore = new Map();
+const REST_URL = 'https://api.restful-api.dev/objects';
 
 export default async function handler(req, res) {
   // CORS Headers
@@ -27,6 +27,8 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Mã kết nối phải có đúng 6 chữ số' });
     }
 
+    const objectName = `nutrifit_v6_${cleanCode}`;
+
     if (req.method === 'POST' || req.method === 'PUT') {
       const { logs, profile } = req.body || {};
       const payload = {
@@ -34,15 +36,54 @@ export default async function handler(req, res) {
         profile: profile || {},
         updatedAt: new Date().toISOString(),
       };
-      memoryStore.set(cleanCode, payload);
+
+      // Check existing object to update or create
+      try {
+        const fetchRes = await fetch(REST_URL);
+        if (fetchRes.ok) {
+          const items = await fetchRes.json();
+          if (Array.isArray(items)) {
+            const existing = items.find((item) => item.name === objectName);
+            if (existing && existing.id) {
+              await fetch(`${REST_URL}/${existing.id}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: objectName, data: payload }),
+              });
+              return res.status(200).json({ success: true, code: cleanCode, payload });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('REST update fallback error:', e);
+      }
+
+      // Create new object if not found
+      await fetch(REST_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: objectName, data: payload }),
+      });
+
       return res.status(200).json({ success: true, code: cleanCode, payload });
     }
 
     if (req.method === 'GET') {
-      const data = memoryStore.get(cleanCode);
-      if (data) {
-        return res.status(200).json({ success: true, data });
+      try {
+        const fetchRes = await fetch(REST_URL);
+        if (fetchRes.ok) {
+          const items = await fetchRes.json();
+          if (Array.isArray(items)) {
+            const found = items.find((item) => item.name === objectName);
+            if (found && found.data && Array.isArray(found.data.logs)) {
+              return res.status(200).json({ success: true, data: found.data });
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('REST fetch fallback error:', e);
       }
+
       return res.status(404).json({ error: 'Chưa có dữ liệu cho mã 6 số này' });
     }
 
