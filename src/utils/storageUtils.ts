@@ -1,0 +1,174 @@
+import { DailyLog, UserGoals } from '../types/health';
+import { generateSampleData } from './sampleData';
+
+const LOGS_STORAGE_KEY = 'nutrifit_daily_logs_v1';
+const GOALS_STORAGE_KEY = 'nutrifit_user_goals_v1';
+
+export const DEFAULT_GOALS: UserGoals = {
+  targetCaloIn: 2200,
+  targetCaloOut: 2300,
+  targetProtein: 140,
+  targetCarbs: 230,
+  targetFats: 60,
+  targetFiber: 30,
+  targetWorkoutMinutes: 45,
+};
+
+export function getStoredLogs(): DailyLog[] {
+  try {
+    const raw = localStorage.getItem(LOGS_STORAGE_KEY);
+    if (!raw) {
+      saveLogs([]);
+      return [];
+    }
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.sort((a, b) => b.date.localeCompare(a.date)); // descending by date
+    }
+    return [];
+  } catch (err) {
+    console.error('Error reading logs from LocalStorage', err);
+    return [];
+  }
+}
+
+export function saveLogs(logs: DailyLog[]): void {
+  try {
+    const sorted = [...logs].sort((a, b) => b.date.localeCompare(a.date));
+    localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(sorted));
+  } catch (err) {
+    console.error('Error saving logs to LocalStorage', err);
+  }
+}
+
+export function upsertLog(newLog: Omit<DailyLog, 'id'> & { id?: string }): DailyLog[] {
+  const currentLogs = getStoredLogs();
+  const existingIndex = currentLogs.findIndex(l => l.date === newLog.date || (newLog.id && l.id === newLog.id));
+
+  let updatedLogs: DailyLog[];
+  const finalId = newLog.id || `log-${newLog.date}-${Date.now()}`;
+  const fullLog: DailyLog = { ...newLog, id: finalId };
+
+  if (existingIndex >= 0) {
+    updatedLogs = [...currentLogs];
+    updatedLogs[existingIndex] = fullLog;
+  } else {
+    updatedLogs = [fullLog, ...currentLogs];
+  }
+
+  saveLogs(updatedLogs);
+  return getStoredLogs();
+}
+
+export function deleteLog(id: string): DailyLog[] {
+  const currentLogs = getStoredLogs();
+  const updatedLogs = currentLogs.filter(l => l.id !== id);
+  saveLogs(updatedLogs);
+  return updatedLogs;
+}
+
+export function resetToSampleData(): DailyLog[] {
+  const sample = generateSampleData(60);
+  saveLogs(sample);
+  return sample;
+}
+
+export function clearAllLogs(): DailyLog[] {
+  localStorage.removeItem(LOGS_STORAGE_KEY);
+  return [];
+}
+
+export function getStoredGoals(): UserGoals {
+  try {
+    const raw = localStorage.getItem(GOALS_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : DEFAULT_GOALS;
+  } catch {
+    return DEFAULT_GOALS;
+  }
+}
+
+export function saveGoals(goals: UserGoals): void {
+  localStorage.setItem(GOALS_STORAGE_KEY, JSON.stringify(goals));
+}
+
+export function exportLogsToCSV(logs: DailyLog[]): void {
+  const headers = ['Ngày (YYYY-MM-DD)', 'Calo nạp (kcal)', 'Protein (g)', 'Carbs (g)', 'Fats (g)', 'Fiber (g)', 'Thời gian tập (phút)', 'Calo tập (kcal)', 'TDEE (kcal)', 'Ghi chú'];
+  const rows = logs.map(l => [
+    l.date,
+    l.caloIn,
+    l.protein,
+    l.carbs,
+    l.fats,
+    l.fiber,
+    l.workoutDuration,
+    l.workoutCalo,
+    l.caloOut,
+    `"${(l.note || '').replace(/"/g, '""')}"`
+  ]);
+
+  const csvContent = '\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `NutriFit_Data_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+export function exportLogsToJSON(logs: DailyLog[]): void {
+  const jsonContent = JSON.stringify(logs, null, 2);
+  const blob = new Blob([jsonContent], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `NutriFit_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+// User Profile & Language Storage
+import { UserProfile, Language } from '../types/health';
+
+const PROFILE_STORAGE_KEY = 'nutrifit_user_profile_v1';
+const LANGUAGE_STORAGE_KEY = 'nutrifit_language_v1';
+
+export const DEFAULT_PROFILE: UserProfile = {
+  name: 'Bảo Uyên',
+  gender: 'female',
+  birthDate: '1998-08-15',
+  height: 165,
+  weight: 54,
+  avatarUrl: '',
+};
+
+export function getStoredProfile(): UserProfile {
+  try {
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+    return raw ? JSON.parse(raw) : DEFAULT_PROFILE;
+  } catch {
+    return DEFAULT_PROFILE;
+  }
+}
+
+export function saveProfile(profile: UserProfile): void {
+  try {
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+  } catch (err) {
+    console.error('Error saving profile', err);
+  }
+}
+
+export function getStoredLanguage(): Language {
+  try {
+    const raw = localStorage.getItem(LANGUAGE_STORAGE_KEY) as Language;
+    return raw === 'en' ? 'en' : 'vi';
+  } catch {
+    return 'vi';
+  }
+}
+
+export function saveLanguage(lang: Language): void {
+  localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+}
+
