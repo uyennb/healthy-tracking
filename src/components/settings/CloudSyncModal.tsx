@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldCheck, Zap } from 'lucide-react';
+import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldCheck, Zap, Link } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Language, DailyLog, UserProfile } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
@@ -9,6 +9,7 @@ import {
   normalizeSyncCode,
   pushDataToCloud,
   fetchCloudData,
+  encodeDataToBase64,
 } from '../../services/cloudSyncService';
 
 interface CloudSyncModalProps {
@@ -36,6 +37,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   const [inputCode, setInputCode] = useState('');
   const [copied, setCopied] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [showQR, setShowQR] = useState(false);
@@ -44,6 +46,11 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   const isVI = language === 'vi';
   const displayCode = formatDisplayCode(syncCode);
+
+  // Build sync URL containing Base64 dataset for 100% instant 1-click sync
+  const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
+  const base64Data = encodeDataToBase64(logs, profile);
+  const qrUrl = `${currentUrl}?sync=${encodeURIComponent(displayCode)}&d=${base64Data}`;
 
   // Handle generating a new 6-digit numeric sync code
   const handleGenerateNewCode = async () => {
@@ -70,6 +77,23 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   // Handle connecting to an existing 6-digit numeric sync code
   const handleConnectExistingCode = async (e: React.FormEvent) => {
     e.preventDefault();
+
+    // Check if user pasted a full sync URL (e.g., https://...?sync=686-888&d=...)
+    if (inputCode.includes('sync=') || inputCode.includes('d=')) {
+      try {
+        const urlObj = new URL(inputCode.trim());
+        const querySync = urlObj.searchParams.get('sync');
+        const queryData = urlObj.searchParams.get('d') || urlObj.searchParams.get('data');
+        if (queryData) {
+          window.location.href = inputCode.trim();
+          return;
+        }
+        if (querySync) {
+          setInputCode(querySync);
+        }
+      } catch {}
+    }
+
     const cleanDigits = normalizeSyncCode(inputCode);
     if (!cleanDigits || cleanDigits.length !== 6) {
       setErrorMsg(isVI ? 'Vui lòng nhập đủ 6 số kết nối (ví dụ: 686-888 hoặc 686888).' : 'Please enter a valid 6-digit sync code (e.g. 686-888).');
@@ -85,7 +109,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
       const remoteData = await fetchCloudData(cleanDigits);
       setIsConnecting(false);
 
-      if (remoteData && remoteData.logs) {
+      if (remoteData && remoteData.logs && remoteData.logs.length > 0) {
         onConnectSync(formattedCode, { logs: remoteData.logs, profile: remoteData.profile || profile });
         setInputCode('');
       } else {
@@ -94,7 +118,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           onConnectSync(formattedCode);
           setInputCode('');
         } else {
-          setErrorMsg(isVI ? 'Chưa tìm thấy dữ liệu cho mã 6 số này.' : 'No data found for this 6-digit code.');
+          setErrorMsg(isVI ? 'Để đồng bộ sang thiết bị này, vui lòng quét mã QR hoặc bấm nút "Sao chép Link 1-Click" trên máy gốc!' : 'To sync to this device, please scan QR code or copy 1-click link from primary device!');
         }
       }
     } catch (err: any) {
@@ -111,9 +135,12 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     setTimeout(() => setCopied(false), 2500);
   };
 
-  // Build sync URL for QR Code scanning
-  const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const qrUrl = `${currentUrl}?sync=${encodeURIComponent(displayCode)}`;
+  // Copy instant 1-click sync link
+  const handleCopyLink = () => {
+    navigator.clipboard.writeText(qrUrl);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 2500);
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
@@ -136,7 +163,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {isVI ? 'Đồng bộ Đám mây Tự động' : 'Automatic Cloud Sync'}
             </h3>
             <p className="text-xs text-slate-500 font-medium">
-              {isVI ? 'Mã 6 chữ số đơn giản - Kết nối trong 1 giây' : 'Simple 6-digit code - Real-time 2-way sync'}
+              {isVI ? 'Mã 6 chữ số đơn giản - Quét QR hoặc 1-Click Link' : 'Simple 6-digit code - QR or 1-Click Link'}
             </p>
           </div>
         </div>
@@ -155,48 +182,65 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 className="text-xs font-bold text-emerald-700 hover:underline flex items-center gap-1"
               >
                 <QrCode className="w-3.5 h-3.5" />
-                <span>{showQR ? (isVI ? 'Ẩn QR' : 'Hide QR') : (isVI ? 'Mã QR' : 'QR Code')}</span>
+                <span>{showQR ? (isVI ? 'Ẩn QR' : 'Hide QR') : (isVI ? 'Quét QR' : 'Scan QR')}</span>
               </button>
             </div>
 
             {/* Sync Code Box */}
-            <div className="bg-white rounded-xl p-3 border border-emerald-200 flex items-center justify-between shadow-sm">
-              <div>
-                <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
-                  {isVI ? 'Mã 6 số của bạn' : 'Your 6-Digit Code'}
-                </span>
-                <span className="text-2xl font-black text-emerald-700 tracking-wider font-mono">
-                  {displayCode}
-                </span>
+            <div className="bg-white rounded-xl p-3 border border-emerald-200 space-y-2 shadow-sm">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+                    {isVI ? 'Mã 6 số của bạn' : 'Your 6-Digit Code'}
+                  </span>
+                  <span className="text-2xl font-black text-emerald-700 tracking-wider font-mono">
+                    {displayCode}
+                  </span>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleCopyCode}
+                  className="flex items-center gap-1 text-xs font-extrabold px-3 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm transition active:scale-95"
+                >
+                  {copied ? (
+                    <>
+                      <Check className="w-3.5 h-3.5" />
+                      <span>{isVI ? 'Đã chép mã!' : 'Copied!'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <Copy className="w-3.5 h-3.5" />
+                      <span>{isVI ? 'Copy Mã' : 'Copy Code'}</span>
+                    </>
+                  )}
+                </button>
               </div>
 
-              <button
-                type="button"
-                onClick={handleCopyCode}
-                className="flex items-center gap-1 text-xs font-extrabold px-3 py-2 rounded-lg bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm transition active:scale-95"
-              >
-                {copied ? (
-                  <>
-                    <Check className="w-3.5 h-3.5" />
-                    <span>{isVI ? 'Đã chép!' : 'Copied!'}</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="w-3.5 h-3.5" />
-                    <span>{isVI ? 'Sao chép' : 'Copy'}</span>
-                  </>
-                )}
-              </button>
+              {/* 1-Click Copy Link Option */}
+              <div className="pt-2 border-t border-slate-100 flex items-center justify-between gap-2">
+                <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1 truncate">
+                  <Link className="w-3.5 h-3.5 text-teal-600 flex-shrink-0" />
+                  {isVI ? 'Link đồng bộ 1-click tức thì:' : '1-Click sync link:'}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleCopyLink}
+                  className="text-xs font-bold text-teal-700 hover:text-teal-900 bg-teal-50 hover:bg-teal-100 border border-teal-200 px-2.5 py-1 rounded-md transition whitespace-nowrap"
+                >
+                  {copiedLink ? (isVI ? '✓ Đã chép Link!' : '✓ Link Copied!') : (isVI ? 'Chép Link' : 'Copy Link')}
+                </button>
+              </div>
             </div>
 
             {/* QR Code Display option */}
             {showQR && (
               <div className="mt-3 p-3 bg-white rounded-xl border border-emerald-200 text-center animate-fadeIn">
                 <div className="inline-block p-2 bg-white rounded-lg shadow-inner">
-                  <QRCodeSVG value={qrUrl} size={150} />
+                  <QRCodeSVG value={qrUrl} size={160} />
                 </div>
-                <p className="text-[11px] text-slate-500 font-medium mt-2">
-                  {isVI ? 'Giơ camera điện thoại lên quét mã này để kết nối tức thì!' : 'Scan this QR code with your phone to connect instantly!'}
+                <p className="text-[11px] text-emerald-800 font-bold mt-2">
+                  {isVI ? '📱 Mở camera điện thoại quét mã QR này để đồng bộ 100% dữ liệu sang máy mới trong 1 giây!' : '📱 Scan this QR code with your phone camera to transfer 100% data instantly!'}
                 </p>
               </div>
             )}
@@ -222,14 +266,14 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {isVI ? 'Chưa bật Đồng bộ Cloud' : 'Cloud Sync Not Active'}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              {isVI ? 'Tạo mã 6 số mới hoặc nhập mã từ máy khác' : 'Generate a 6-digit code or enter code from another device'}
+              {isVI ? 'Tạo mã 6 số mới hoặc quét QR để đồng bộ' : 'Generate 6-digit code or scan QR to sync'}
             </p>
           </div>
         )}
 
         {/* Error message alert */}
         {errorMsg && (
-          <div className="mb-4 p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-semibold">
+          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold">
             {errorMsg}
           </div>
         )}
@@ -267,16 +311,15 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           {/* Enter Existing Code Form */}
           <form onSubmit={handleConnectExistingCode} className="space-y-2">
             <label className="block text-xs font-bold text-slate-700">
-              {isVI ? 'Nhập mã 6 số từ máy khác:' : 'Enter 6-digit code from another device:'}
+              {isVI ? 'Nhập mã 6 số hoặc Dán Link từ máy gốc:' : 'Enter 6-digit code or paste link:'}
             </label>
             <div className="flex gap-2">
               <input
                 type="text"
-                maxLength={8}
                 placeholder="VD: 686-888"
                 value={inputCode}
                 onChange={e => setInputCode(e.target.value)}
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold uppercase text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-center tracking-widest"
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-center tracking-wider"
               />
               <button
                 type="submit"
