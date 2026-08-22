@@ -337,6 +337,18 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               </button>
             </div>
           </form>
+
+          {/* Instant Sync Tip Box */}
+          <div className="p-3 bg-teal-50 border border-teal-200/80 rounded-2xl text-left space-y-1">
+            <p className="text-[11px] font-extrabold text-teal-800 flex items-center gap-1">
+              ⚡ {isVI ? 'Mẹo đồng bộ tức thì 1-Click sang Máy tính:' : 'Instant 1-Click Sync Tip:'}
+            </p>
+            <p className="text-[11px] font-medium text-teal-700 leading-relaxed">
+              {isVI
+                ? 'Trên Điện thoại (đang có dữ liệu mới), bấm nút Sync ở góc trên -> chọn "Chép Link" -> Mở Link đó trên Máy tính là 100% dữ liệu tự động bay sang ngay lập tức!'
+                : 'On Phone, click Sync -> Copy Link -> Open that link on Computer to import 100% data instantly!'}
+            </p>
+          </div>
         </div>
       </div>
     </div>
