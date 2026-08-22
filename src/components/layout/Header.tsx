@@ -1,5 +1,5 @@
 import React from 'react';
-import { Flame, User } from 'lucide-react';
+import { Flame, User, Cloud, Zap } from 'lucide-react';
 import { UserProfile, Language } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
 
@@ -9,6 +9,8 @@ interface HeaderProps {
   onOpenProfile: () => void;
   language: Language;
   onChangeLanguage: (lang: Language) => void;
+  syncCode?: string;
+  onOpenCloudSync?: () => void;
 }
 
 export const Header: React.FC<HeaderProps> = ({
@@ -16,6 +18,8 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenProfile,
   language,
   onChangeLanguage,
+  syncCode,
+  onOpenCloudSync,
 }) => {
   const t = getTranslation(language);
 
@@ -32,8 +36,33 @@ export const Header: React.FC<HeaderProps> = ({
           </h1>
         </div>
 
-        {/* Quick Actions - Language Toggle & Profile Avatar */}
+        {/* Quick Actions - Cloud Sync, Language Toggle & Profile Avatar */}
         <div className="flex items-center gap-2">
+          {/* Cloud Realtime Sync Status Button */}
+          {onOpenCloudSync && (
+            <button
+              onClick={onOpenCloudSync}
+              className={`flex items-center gap-1.5 text-xs font-extrabold px-2.5 py-1.5 rounded-xl transition active:scale-95 ${
+                syncCode
+                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-sm hover:bg-emerald-100'
+                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+              }`}
+              title="Đồng bộ Đám mây / Cloud Sync"
+            >
+              {syncCode ? (
+                <>
+                  <Zap className="w-3.5 h-3.5 text-emerald-500 fill-emerald-500 animate-pulse" />
+                  <span className="font-mono text-[11px]">{syncCode}</span>
+                </>
+              ) : (
+                <>
+                  <Cloud className="w-3.5 h-3.5 text-slate-500" />
+                  <span className="hidden xs:inline">Sync</span>
+                </>
+              )}
+            </button>
+          )}
+
           {/* Language Switcher Quick Button */}
           <button
             onClick={() => onChangeLanguage(language === 'vi' ? 'en' : 'vi')}

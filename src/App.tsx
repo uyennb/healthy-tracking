@@ -9,6 +9,7 @@ import { WorkoutChart } from './components/charts/WorkoutChart';
 import { LogDataTable } from './components/table/LogDataTable';
 import { DailyLogModal } from './components/forms/DailyLogModal';
 import { DataManagementModal } from './components/settings/DataManagementModal';
+import { CloudSyncModal } from './components/settings/CloudSyncModal';
 import { ProfileView } from './components/profile/ProfileView';
 
 import { DailyLog, PeriodType, DisplayMode, ChartCategory, CustomDateRange, UserProfile, Language } from './types/health';
@@ -23,16 +24,21 @@ import {
   saveProfile,
   getStoredLanguage,
   saveLanguage,
+  getStoredSyncCode,
+  saveSyncCode,
+  clearSyncCode,
 } from './utils/storageUtils';
 import { filterLogsByPeriod, processChartData } from './utils/dateUtils';
 import { getTranslation } from './utils/i18n';
 import { format, subDays } from 'date-fns';
 import { BarChart3, LineChart as LineChartIcon, Table as TableIcon, Database, Download } from 'lucide-react';
+import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, normalizeSyncCode } from './services/firebase';
 
 export function App() {
   const [logs, setLogs] = useState<DailyLog[]>([]);
   const [profile, setProfile] = useState<UserProfile>(getStoredProfile());
   const [language, setLanguage] = useState<Language>(getStoredLanguage());
+  const [syncCode, setSyncCode] = useState<string>(getStoredSyncCode());
 
   const [period, setPeriod] = useState<PeriodType>('month');
   const [customRange, setCustomRange] = useState<CustomDateRange>({
@@ -47,15 +53,68 @@ export function App() {
   const [isAddModalOpen, setIsAddModalOpen] = useState<boolean>(false);
   const [editingLog, setEditingLog] = useState<DailyLog | null>(null);
   const [isDataModalOpen, setIsDataModalOpen] = useState<boolean>(false);
+  const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
 
   const t = getTranslation(language);
 
+  // Load initial local data
   useEffect(() => {
     const loadedLogs = getStoredLogs();
     setLogs(loadedLogs);
     setProfile(getStoredProfile());
     setLanguage(getStoredLanguage());
   }, []);
+
+  // Check URL query string for QR code sync parameter (?sync=XXX-XXX)
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      const params = new URLSearchParams(window.location.search);
+      const querySync = params.get('sync');
+      if (querySync) {
+        const clean = normalizeSyncCode(querySync);
+        if (clean) {
+          saveSyncCode(querySync);
+          setSyncCode(querySync);
+          fetchCloudData(clean).then(data => {
+            if (data && data.logs) {
+              saveLogs(data.logs);
+              setLogs(data.logs);
+              if (data.profile) {
+                saveProfile(data.profile);
+                setProfile(data.profile);
+              }
+            }
+          });
+          window.history.replaceState({}, '', window.location.pathname);
+        }
+      }
+    }
+  }, []);
+
+  // Subscribe to Realtime Cloud Sync when syncCode is set
+  useEffect(() => {
+    if (!syncCode) return;
+
+    const unsubscribe = subscribeToCloudSync(syncCode, ({ logs: cloudLogs, profile: cloudProfile }) => {
+      if (cloudLogs && Array.isArray(cloudLogs)) {
+        saveLogs(cloudLogs);
+        setLogs(cloudLogs);
+      }
+      if (cloudProfile) {
+        saveProfile(cloudProfile);
+        setProfile(cloudProfile);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [syncCode]);
+
+  // Helper to auto-push local updates to Cloud
+  const autoPushCloud = (newLogs: DailyLog[], newProfile: UserProfile = profile) => {
+    if (syncCode) {
+      pushDataToCloud(syncCode, newLogs, newProfile);
+    }
+  };
 
   const filteredLogs = useMemo(() => {
     return filterLogsByPeriod(logs, period, customRange);
@@ -69,36 +128,63 @@ export function App() {
     const updated = upsertLog(logData);
     setLogs(updated);
     setEditingLog(null);
+    autoPushCloud(updated, profile);
   };
 
   const handleDeleteLog = (id: string) => {
     const updated = deleteLog(id);
     setLogs(updated);
+    autoPushCloud(updated, profile);
   };
 
   const handleQuickReset = () => {
     const resetLogs = resetToSampleData();
     setLogs(resetLogs);
+    autoPushCloud(resetLogs, profile);
   };
 
   const handleClearAll = () => {
     const cleared = clearAllLogs();
     setLogs(cleared);
+    autoPushCloud(cleared, profile);
   };
 
   const handleImportLogs = (imported: DailyLog[]) => {
     saveLogs(imported);
     setLogs(imported);
+    autoPushCloud(imported, profile);
   };
 
   const handleSaveProfile = (updatedProfile: UserProfile) => {
     saveProfile(updatedProfile);
     setProfile(updatedProfile);
+    autoPushCloud(logs, updatedProfile);
   };
 
   const handleChangeLanguage = (newLang: Language) => {
     saveLanguage(newLang);
     setLanguage(newLang);
+  };
+
+  const handleConnectSync = (code: string, cloudData?: { logs: DailyLog[]; profile: UserProfile }) => {
+    saveSyncCode(code);
+    setSyncCode(code);
+
+    if (cloudData && cloudData.logs) {
+      saveLogs(cloudData.logs);
+      setLogs(cloudData.logs);
+      if (cloudData.profile) {
+        saveProfile(cloudData.profile);
+        setProfile(cloudData.profile);
+      }
+    } else {
+      pushDataToCloud(code, logs, profile);
+    }
+  };
+
+  const handleDisconnectSync = () => {
+    clearSyncCode();
+    setSyncCode('');
   };
 
   const handleEditClick = (log: DailyLog) => {
@@ -120,6 +206,8 @@ export function App() {
         onOpenProfile={() => setActiveTab('profile')}
         language={language}
         onChangeLanguage={handleChangeLanguage}
+        syncCode={syncCode}
+        onOpenCloudSync={() => setIsSyncModalOpen(true)}
       />
 
       {/* Main Container */}
@@ -274,7 +362,7 @@ export function App() {
               </div>
             )}
 
-            {/* Data Management Footer Card */}
+            {/* Data Management & Sync Footer Card */}
             <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-slate-100 mt-4 mb-2 flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Database className="w-4 h-4 text-emerald-600" />
@@ -314,7 +402,7 @@ export function App() {
         language={language}
       />
 
-      {/* Data Management & Backup Modal */}
+      {/* Data Management Dialog */}
       <DataManagementModal
         isOpen={isDataModalOpen}
         onClose={() => setIsDataModalOpen(false)}
@@ -322,6 +410,18 @@ export function App() {
         onImportLogs={handleImportLogs}
         onResetSample={handleQuickReset}
         onClearAll={handleClearAll}
+      />
+
+      {/* Cloud Realtime Sync Dialog */}
+      <CloudSyncModal
+        isOpen={isSyncModalOpen}
+        onClose={() => setIsSyncModalOpen(false)}
+        syncCode={syncCode}
+        onConnectSync={handleConnectSync}
+        onDisconnectSync={handleDisconnectSync}
+        logs={logs}
+        profile={profile}
+        language={language}
       />
     </div>
   );
