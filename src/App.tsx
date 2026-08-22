@@ -57,6 +57,14 @@ export function App() {
   const [isDataModalOpen, setIsDataModalOpen] = useState<boolean>(false);
   const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
 
+  const [toastMsg, setToastMsg] = useState<string>('');
+  const lastLocalUpdateRef = React.useRef<number>(Date.now());
+
+  const showToast = (msg: string) => {
+    setToastMsg(msg);
+    setTimeout(() => setToastMsg(''), 4000);
+  };
+
   const t = getTranslation(language);
 
   // Load initial local data
@@ -116,7 +124,12 @@ export function App() {
   useEffect(() => {
     if (!syncCode) return;
 
-    const unsubscribe = subscribeToCloudSync(syncCode, ({ logs: cloudLogs, profile: cloudProfile }) => {
+    const unsubscribe = subscribeToCloudSync(syncCode, ({ logs: cloudLogs, profile: cloudProfile, updatedAt }) => {
+      const remoteTime = updatedAt ? new Date(updatedAt).getTime() : 0;
+      if (remoteTime > 0 && remoteTime < lastLocalUpdateRef.current) {
+        return; // Ignore stale remote data
+      }
+
       if (cloudLogs && Array.isArray(cloudLogs) && cloudLogs.length > 0) {
         saveLogs(cloudLogs);
         setLogs(cloudLogs);
@@ -146,10 +159,14 @@ export function App() {
   }, [filteredLogs]);
 
   const handleSaveLog = (logData: Omit<DailyLog, 'id'> & { id?: string }) => {
+    lastLocalUpdateRef.current = Date.now();
     const updated = upsertLog(logData);
     setLogs(updated);
     setEditingLog(null);
     autoPushCloud(updated, profile);
+
+    const dateFormatted = logData.date ? logData.date.split('-').reverse().join('/') : '';
+    showToast(language === 'vi' ? `✅ Đã lưu nhật ký ngày ${dateFormatted} thành công!` : `✅ Saved daily log for ${dateFormatted}!`);
   };
 
   const handleDeleteLog = (id: string) => {
@@ -220,6 +237,13 @@ export function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 pb-24 font-['Plus_Jakarta_Sans',sans-serif]">
+      {/* Toast Notification Banner */}
+      {toastMsg && (
+        <div className="fixed top-16 left-1/2 -translate-x-1/2 z-50 bg-slate-900/90 backdrop-blur-md text-emerald-400 font-extrabold text-xs px-4 py-2.5 rounded-2xl shadow-xl border border-emerald-500/30 animate-fadeIn flex items-center gap-2">
+          <span>{toastMsg}</span>
+        </div>
+      )}
+
       {/* Top Mobile Header */}
       <Header
         logCount={logs.length}
