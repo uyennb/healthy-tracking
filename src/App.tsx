@@ -59,22 +59,10 @@ export function App() {
 
   const t = getTranslation(language);
 
-  // Load initial local data and enforce 8 real days presence with exact TDEE
+  // Load initial local data
   useEffect(() => {
-    let loadedLogs = getStoredLogs();
-    const hasAug14 = loadedLogs.some(l => l.date === '2026-08-14');
-    const aug14 = loadedLogs.find(l => l.date === '2026-08-14');
-
-    if (!hasAug14 || loadedLogs.length < 8 || (aug14 && aug14.caloOut === 1500)) {
-      loadedLogs = USER_REAL_LOGS;
-      saveLogs(USER_REAL_LOGS);
-    }
-    // Remove sample log 2026-08-22
-    const cleanLogs = loadedLogs.filter(l => l.date !== '2026-08-22');
-    if (cleanLogs.length !== loadedLogs.length) {
-      saveLogs(cleanLogs);
-    }
-    setLogs(cleanLogs);
+    const loadedLogs = getStoredLogs();
+    setLogs(loadedLogs);
     setProfile(getStoredProfile());
     setLanguage(getStoredLanguage());
   }, []);
@@ -110,14 +98,9 @@ export function App() {
         saveSyncCode(clean);
         setSyncCode(clean);
         fetchCloudData(clean).then(data => {
-          if (data && data.logs) {
-            let cleanLogs = data.logs.filter(l => l.date !== '2026-08-22');
-            if (!cleanLogs.some(l => l.date === '2026-08-14') || cleanLogs.length < 8) {
-              cleanLogs = USER_REAL_LOGS;
-              pushDataToCloud(clean, USER_REAL_LOGS, profile);
-            }
-            saveLogs(cleanLogs);
-            setLogs(cleanLogs);
+          if (data && data.logs && data.logs.length > 0) {
+            saveLogs(data.logs);
+            setLogs(data.logs);
             if (data.profile) {
               saveProfile(data.profile);
               setProfile(data.profile);
@@ -133,18 +116,10 @@ export function App() {
   useEffect(() => {
     if (!syncCode) return;
 
-    // Immediately push 8 real days to active sync code to fix legacy remote payload
-    pushDataToCloud(syncCode, USER_REAL_LOGS, profile);
-
     const unsubscribe = subscribeToCloudSync(syncCode, ({ logs: cloudLogs, profile: cloudProfile }) => {
-      if (cloudLogs && Array.isArray(cloudLogs)) {
-        let cleanLogs = cloudLogs.filter(l => l.date !== '2026-08-22');
-        if (!cleanLogs.some(l => l.date === '2026-08-14') || cleanLogs.length < 8) {
-          cleanLogs = USER_REAL_LOGS;
-          pushDataToCloud(syncCode, USER_REAL_LOGS, profile);
-        }
-        saveLogs(cleanLogs);
-        setLogs(cleanLogs);
+      if (cloudLogs && Array.isArray(cloudLogs) && cloudLogs.length > 0) {
+        saveLogs(cloudLogs);
+        setLogs(cloudLogs);
       }
       if (cloudProfile) {
         saveProfile(cloudProfile);
