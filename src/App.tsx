@@ -32,7 +32,7 @@ import { filterLogsByPeriod, processChartData } from './utils/dateUtils';
 import { getTranslation } from './utils/i18n';
 import { format, subDays } from 'date-fns';
 import { BarChart3, LineChart as LineChartIcon, Table as TableIcon, Database, Download } from 'lucide-react';
-import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, normalizeSyncCode } from './services/firebase';
+import { pushDataToCloud, subscribeToCloudSync, fetchCloudData } from './services/cloudSyncService';
 
 export function App() {
   const [logs, setLogs] = useState<DailyLog[]>([]);
@@ -71,10 +71,10 @@ export function App() {
       const params = new URLSearchParams(window.location.search);
       const querySync = params.get('sync');
       if (querySync) {
-        const clean = normalizeSyncCode(querySync);
+        const clean = querySync.trim();
         if (clean) {
-          saveSyncCode(querySync);
-          setSyncCode(querySync);
+          saveSyncCode(clean);
+          setSyncCode(clean);
           fetchCloudData(clean).then(data => {
             if (data && data.logs) {
               saveLogs(data.logs);

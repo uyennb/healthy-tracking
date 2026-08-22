@@ -3,7 +3,7 @@ import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldC
 import { QRCodeSVG } from 'qrcode.react';
 import { Language, DailyLog, UserProfile } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
-import { generateSyncCode, pushDataToCloud, fetchCloudData, normalizeSyncCode } from '../../services/firebase';
+import { createCloudSyncObject, pushDataToCloud, fetchCloudData, formatDisplayCode } from '../../services/cloudSyncService';
 
 interface CloudSyncModalProps {
   isOpen: boolean;
@@ -37,52 +37,61 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   if (!isOpen) return null;
 
   const isVI = language === 'vi';
+  const displayCode = formatDisplayCode(syncCode);
 
-  // Handle generating a new sync code
+  // Handle generating a new sync code with fast REST API
   const handleGenerateNewCode = async () => {
     setIsConnecting(true);
     setErrorMsg('');
-    const newCode = generateSyncCode();
-    
-    // Push current data to Cloud first
-    const success = await pushDataToCloud(newCode, logs, profile);
-    setIsConnecting(false);
 
-    if (success) {
-      onConnectSync(newCode);
-    } else {
-      setErrorMsg(isVI ? 'Không thể kết nối đến máy chủ Cloud, vui lòng thử lại.' : 'Failed to connect to Cloud server, please try again.');
+    try {
+      const result = await createCloudSyncObject(logs, profile);
+      setIsConnecting(false);
+
+      if (result && result.id) {
+        onConnectSync(result.id);
+      } else {
+        setErrorMsg(isVI ? 'Không thể kết nối máy chủ Cloud (Timeout 5s). Vui lòng thử lại.' : 'Failed to connect to Cloud server (Timeout 5s). Please try again.');
+      }
+    } catch (err: any) {
+      setIsConnecting(false);
+      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server connection error.'));
     }
   };
 
   // Handle connecting to an existing sync code
   const handleConnectExistingCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    const clean = normalizeSyncCode(inputCode);
-    if (!clean || clean.length < 4) {
-      setErrorMsg(isVI ? 'Vui lòng nhập mã kết nối hợp lệ (ví dụ: 686-888).' : 'Please enter a valid sync code (e.g., 686-888).');
+    const clean = inputCode.trim().replace(/[^a-zA-Z0-9]/g, '');
+    if (!clean) {
+      setErrorMsg(isVI ? 'Vui lòng nhập mã kết nối hợp lệ.' : 'Please enter a valid sync code.');
       return;
     }
 
     setIsConnecting(true);
     setErrorMsg('');
 
-    // Fetch existing remote data from Cloud
-    const remoteData = await fetchCloudData(clean);
-    setIsConnecting(false);
+    try {
+      // Fetch existing remote data from Cloud REST endpoint
+      const remoteData = await fetchCloudData(clean);
+      setIsConnecting(false);
 
-    if (remoteData && remoteData.logs) {
-      onConnectSync(inputCode.trim(), { logs: remoteData.logs, profile: remoteData.profile || profile });
-      setInputCode('');
-    } else {
-      // If code doesn't exist yet on cloud, create it with local data
-      const success = await pushDataToCloud(clean, logs, profile);
-      if (success) {
-        onConnectSync(inputCode.trim());
+      if (remoteData && remoteData.logs) {
+        onConnectSync(clean, { logs: remoteData.logs, profile: remoteData.profile || profile });
         setInputCode('');
       } else {
-        setErrorMsg(isVI ? 'Không tìm thấy dữ liệu cho mã này trên Cloud.' : 'No data found for this code on Cloud.');
+        // If code doesn't exist yet, try creating / pushing
+        const success = await pushDataToCloud(clean, logs, profile);
+        if (success) {
+          onConnectSync(clean);
+          setInputCode('');
+        } else {
+          setErrorMsg(isVI ? 'Không tìm thấy dữ liệu cho mã này trên Cloud.' : 'No data found for this code on Cloud.');
+        }
       }
+    } catch (err: any) {
+      setIsConnecting(false);
+      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server connection error.'));
     }
   };
 
@@ -148,8 +157,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 <span className="block text-[10px] font-bold text-slate-400 uppercase tracking-wider">
                   {isVI ? 'Mã kết nối của bạn' : 'Your Sync Code'}
                 </span>
-                <span className="text-xl font-black text-emerald-700 tracking-wider font-mono">
-                  {syncCode}
+                <span className="text-lg font-black text-emerald-700 tracking-wider font-mono">
+                  {displayCode}
                 </span>
               </div>
 
@@ -224,14 +233,19 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             type="button"
             disabled={isConnecting}
             onClick={handleGenerateNewCode}
-            className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-extrabold py-3 px-4 rounded-2xl shadow-md shadow-emerald-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2 text-xs"
+            className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-extrabold py-3 px-4 rounded-2xl shadow-md shadow-emerald-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2 text-xs disabled:opacity-60"
           >
             {isConnecting ? (
-              <RefreshCw className="w-4 h-4 animate-spin" />
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>{isVI ? 'Đang tạo mã kết nối Cloud...' : 'Generating Cloud Sync Code...'}</span>
+              </>
             ) : (
-              <Cloud className="w-4 h-4" />
+              <>
+                <Cloud className="w-4 h-4" />
+                <span>{isVI ? 'Tạo Mã Kết Nối Mới' : 'Generate New Sync Code'}</span>
+              </>
             )}
-            <span>{isVI ? 'Tạo Mã Kết Nối Mới 6 Chữ Số' : 'Generate New 6-Digit Sync Code'}</span>
           </button>
 
           <div className="relative flex py-1 items-center">
@@ -250,10 +264,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="VD: 686-888"
+                placeholder={isVI ? 'Nhập hoặc dán mã kết nối...' : 'Paste sync code...'}
                 value={inputCode}
                 onChange={e => setInputCode(e.target.value)}
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-mono font-bold uppercase text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold uppercase text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
               />
               <button
                 type="submit"
