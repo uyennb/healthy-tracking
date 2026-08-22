@@ -62,7 +62,7 @@ export function decodeDataFromBase64(base64Str: string): { logs?: DailyLog[]; pr
 }
 
 /**
- * Push local data to Cloud Sync (Serverless API + Local Backup Cache)
+ * Push local data to Cloud Sync (Network API first, then Local Backup Cache)
  */
 export async function pushDataToCloud(
   syncCode: string,
@@ -97,36 +97,25 @@ export async function pushDataToCloud(
         code: digits,
         logs,
         profile,
+        updatedAt: payload.updatedAt,
       }),
       signal: controller.signal,
     });
     clearTimeout(timer);
     return res.ok || true;
   } catch {
-    // If offline or dev mode, local backup storage succeeded
     return true;
   }
 }
 
 /**
- * Fetch remote data for a 6-digit sync code
+ * Fetch remote data for a 6-digit sync code (Network First to guarantee cross-device sync)
  */
 export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload | null> {
   const digits = normalizeSyncCode(syncCode);
   if (!digits || digits.length !== 6) return null;
 
-  // 1. Check local backup storage first
-  try {
-    const cached = localStorage.getItem(`nutrifit_cloud_payload_${digits}`);
-    if (cached) {
-      const parsed = JSON.parse(cached);
-      if (parsed && Array.isArray(parsed.logs) && parsed.logs.length > 0) {
-        return parsed as CloudSyncPayload;
-      }
-    }
-  } catch {}
-
-  // 2. Fetch from Vercel Serverless Sync API
+  // 1. Fetch from Serverless Sync API FIRST for fresh remote data
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 3000);
@@ -137,7 +126,24 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
     if (res.ok) {
       const json = await res.json();
       if (json && json.data && Array.isArray(json.data.logs)) {
+        // Cache the fresh remote data locally
+        try {
+          localStorage.setItem(`nutrifit_cloud_payload_${digits}`, JSON.stringify(json.data));
+        } catch {}
         return json.data as CloudSyncPayload;
+      }
+    }
+  } catch (err) {
+    console.warn('Network fetch error, trying local cache:', err);
+  }
+
+  // 2. Fall back to local backup cache if network is offline or un-reachable
+  try {
+    const cached = localStorage.getItem(`nutrifit_cloud_payload_${digits}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && Array.isArray(parsed.logs) && parsed.logs.length > 0) {
+        return parsed as CloudSyncPayload;
       }
     }
   } catch {}
