@@ -17,41 +17,34 @@ export const DEFAULT_GOALS: UserGoals = {
   targetWorkoutMinutes: 45,
 };
 
-const REAL_DATA_MIGRATION_KEY = 'nutrifit_migrated_v5_force_exact_tdee_v5';
+const REAL_DATA_MIGRATION_KEY = 'nutrifit_migrated_v6_clean';
 
 export function getStoredLogs(): DailyLog[] {
   try {
     const isMigrated = localStorage.getItem(REAL_DATA_MIGRATION_KEY);
     if (!isMigrated) {
       const realLogs = generateSampleData(8);
-      // Ensure 2026-08-22 is removed
-      const cleanRealLogs = realLogs.filter(l => l.date !== '2026-08-22');
-      saveLogs(cleanRealLogs);
+      saveLogs(realLogs);
       localStorage.setItem(REAL_DATA_MIGRATION_KEY, 'true');
-      return cleanRealLogs;
+      return realLogs;
     }
 
     const raw = localStorage.getItem(LOGS_STORAGE_KEY);
     if (!raw) {
-      const realLogs = generateSampleData(8).filter(l => l.date !== '2026-08-22');
+      const realLogs = generateSampleData(8);
       saveLogs(realLogs);
       return realLogs;
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      // Remove any sample 2026-08-22 log
-      const filtered = parsed.filter((l: DailyLog) => l.date !== '2026-08-22');
-      if (filtered.length !== parsed.length) {
-        saveLogs(filtered);
-      }
-      return filtered.sort((a: DailyLog, b: DailyLog) => b.date.localeCompare(a.date));
+      return parsed.sort((a: DailyLog, b: DailyLog) => b.date.localeCompare(a.date));
     }
-    const realLogs = generateSampleData(8).filter(l => l.date !== '2026-08-22');
+    const realLogs = generateSampleData(8);
     saveLogs(realLogs);
     return realLogs;
   } catch (err) {
     console.error('Error reading logs from LocalStorage', err);
-    return generateSampleData(8).filter(l => l.date !== '2026-08-22');
+    return generateSampleData(8);
   }
 }
 
@@ -91,7 +84,7 @@ export function deleteLog(id: string): DailyLog[] {
 }
 
 export function resetToSampleData(): DailyLog[] {
-  const samples = generateSampleData(60);
+  const samples = generateSampleData(8);
   saveLogs(samples);
   return samples;
 }
@@ -101,47 +94,40 @@ export function clearAllLogs(): DailyLog[] {
   return [];
 }
 
-// User Profile & Language Storage
-export const DEFAULT_PROFILE: UserProfile = {
-  name: 'Bảo Uyên',
-  gender: 'female',
-  birthDate: '1998-08-15',
-  height: 165,
-  weight: 54,
-  avatarUrl: '',
-};
-
 export function getStoredProfile(): UserProfile {
   try {
     const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
-    return raw ? JSON.parse(raw) : DEFAULT_PROFILE;
-  } catch {
-    return DEFAULT_PROFILE;
-  }
+    if (raw) return JSON.parse(raw);
+  } catch {}
+  return {
+    name: 'Bảo Uyên',
+    gender: 'female',
+    birthDate: '1998-05-15',
+    height: 162,
+    weight: 54,
+  };
 }
 
 export function saveProfile(profile: UserProfile): void {
   try {
     localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
-  } catch (err) {
-    console.error('Error saving profile', err);
-  }
+  } catch {}
 }
 
 export function getStoredLanguage(): Language {
   try {
-    const raw = localStorage.getItem(LANGUAGE_STORAGE_KEY) as Language;
-    return raw === 'en' ? 'en' : 'vi';
-  } catch {
-    return 'vi';
-  }
+    const lang = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (lang === 'en' || lang === 'vi') return lang;
+  } catch {}
+  return 'vi';
 }
 
 export function saveLanguage(lang: Language): void {
-  localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+  try {
+    localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+  } catch {}
 }
 
-// Sync Code Storage
 export function getStoredSyncCode(): string {
   try {
     return localStorage.getItem(SYNC_CODE_STORAGE_KEY) || '';
@@ -152,22 +138,28 @@ export function getStoredSyncCode(): string {
 
 export function saveSyncCode(code: string): void {
   try {
-    localStorage.setItem(SYNC_CODE_STORAGE_KEY, code.trim());
-  } catch (err) {
-    console.error('Error saving sync code', err);
-  }
+    localStorage.setItem(SYNC_CODE_STORAGE_KEY, code);
+  } catch {}
 }
 
 export function clearSyncCode(): void {
   try {
     localStorage.removeItem(SYNC_CODE_STORAGE_KEY);
-  } catch (err) {
-    console.error('Error clearing sync code', err);
-  }
+  } catch {}
+}
+
+export function exportLogsToJSON(logs: DailyLog[]): void {
+  const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(logs, null, 2));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute('href', dataStr);
+  downloadAnchor.setAttribute('download', `nutrifit_logs_${new Date().toISOString().slice(0,10)}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
 }
 
 export function exportLogsToCSV(logs: DailyLog[]): void {
-  const headers = ['Date', 'CaloIn', 'Protein(g)', 'Carbs(g)', 'Fats(g)', 'Fiber(g)', 'WorkoutDuration(min)', 'WorkoutCalo(kcal)', 'TDEE(kcal)', 'Notes'];
+  const headers = ['Ngay', 'CaloIn', 'Protein(g)', 'Carbs(g)', 'Fats(g)', 'Fiber(g)', 'Tap(phut)', 'CaloTap', 'CaloOut(TDEE)', 'GhiChu'];
   const rows = logs.map(l => [
     l.date,
     l.caloIn,
@@ -181,21 +173,11 @@ export function exportLogsToCSV(logs: DailyLog[]): void {
     `"${(l.note || '').replace(/"/g, '""')}"`
   ]);
 
-  const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', `nutrifit-health-logs-${new Date().toISOString().slice(0, 10)}.csv`);
-  link.click();
-}
-
-export function exportLogsToJSON(logs: DailyLog[]): void {
-  const jsonContent = JSON.stringify(logs, null, 2);
-  const blob = new Blob([jsonContent], { type: 'application/json' });
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement('a');
-  link.setAttribute('href', url);
-  link.setAttribute('download', `nutrifit-backup-${new Date().toISOString().slice(0, 10)}.json`);
-  link.click();
+  const csvContent = 'data:text/csv;charset=utf-8,\uFEFF' + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute('href', encodeURI(csvContent));
+  downloadAnchor.setAttribute('download', `nutrifit_logs_${new Date().toISOString().slice(0,10)}.csv`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
 }
