@@ -1,7 +1,7 @@
 import React from 'react';
 import { Flame, Zap, Dumbbell, ShieldCheck, Scale } from 'lucide-react';
 import { MetricCard } from '../common/MetricCard';
-import { calculateSummary } from '../../utils/dateUtils';
+import { calculateSummary, formatWorkoutDurationHMS } from '../../utils/dateUtils';
 import { DailyLog, Language } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
 
@@ -70,8 +70,8 @@ export const SummaryCards: React.FC<SummaryCardsProps> = ({ logs, language = 'vi
 
         <MetricCard
           title={t.workoutTotal}
-          value={summary.totalWorkoutDuration}
-          unit={t.unitMin}
+          value={formatWorkoutDurationHMS(summary.totalWorkoutDuration)}
+          unit=""
           subtitle={`${language === 'vi' ? 'Đốt ~' : 'Burned ~'}${summary.totalWorkoutCalo.toLocaleString(numLoc)} ${t.unitKcal}`}
           icon={Dumbbell}
           iconBgColor="bg-purple-50"

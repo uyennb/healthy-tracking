@@ -1,7 +1,7 @@
 import React from 'react';
 import { Edit2, Trash2, Calendar, Zap } from 'lucide-react';
 import { DailyLog, Language } from '../../types/health';
-import { formatDateLang, calculateSummary } from '../../utils/dateUtils';
+import { formatDateLang, calculateSummary, formatWorkoutDurationHMS } from '../../utils/dateUtils';
 import { getTranslation } from '../../utils/i18n';
 
 interface LogDataTableProps {
@@ -70,7 +70,7 @@ export const LogDataTable: React.FC<LogDataTableProps> = ({
               <td className="py-2.5 px-2 text-right text-amber-700">{summary.avgCarbs}g</td>
               <td className="py-2.5 px-2 text-right text-pink-700">{summary.avgFats}g</td>
               <td className="py-2.5 px-2 text-right text-emerald-700">{summary.avgFiber}g</td>
-              <td className="py-2.5 px-2 text-right text-purple-700">{summary.avgWorkoutDuration}</td>
+              <td className="py-2.5 px-2 text-right text-purple-700 font-mono">{formatWorkoutDurationHMS(summary.avgWorkoutDuration)}</td>
               <td className="py-2.5 px-2 text-right text-cyan-700">{summary.avgWorkoutCalo}</td>
               <td className="py-2.5 px-2 text-right text-rose-700">{summary.avgCaloOut}</td>
               <td className={`py-2.5 px-2 text-right font-black ${summary.avgDeficit <= 0 ? 'text-emerald-700' : 'text-amber-700'}`}>
@@ -95,7 +95,7 @@ export const LogDataTable: React.FC<LogDataTableProps> = ({
                   <td className="py-2.5 px-2 text-right font-medium text-amber-600">{log.carbs}g</td>
                   <td className="py-2.5 px-2 text-right font-medium text-pink-600">{log.fats}g</td>
                   <td className="py-2.5 px-2 text-right font-medium text-emerald-600">{log.fiber}g</td>
-                  <td className="py-2.5 px-2 text-right font-medium text-purple-600">{log.workoutDuration}{language === 'vi' ? 'p' : 'm'}</td>
+                  <td className="py-2.5 px-2 text-right font-bold text-purple-600 font-mono">{formatWorkoutDurationHMS(log.workoutDuration)}</td>
                   <td className="py-2.5 px-2 text-right font-medium text-cyan-600">{log.workoutCalo}</td>
                   <td className="py-2.5 px-2 text-right font-bold text-rose-600">{log.caloOut.toLocaleString(language === 'vi' ? 'vi-VN' : 'en-US')}</td>
                   <td className={`py-2.5 px-2 text-right font-extrabold ${deficit <= 0 ? 'text-emerald-600' : 'text-amber-600'}`}>

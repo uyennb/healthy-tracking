@@ -76,7 +76,6 @@ export function filterLogsByPeriod(
 export function processChartData(logs: DailyLog[]): AggregatedData[] {
   return logs.map(log => {
     const dateObj = parseISO(log.date);
-    // Display label: e.g. "22/08"
     const label = format(dateObj, 'dd/MM');
     return {
       label,
@@ -162,4 +161,54 @@ export function formatDateLang(dateStr: string, lang: Language = 'vi'): string {
   } catch {
     return dateStr;
   }
+}
+
+/**
+ * Format workout duration seconds/minutes to HH:MM:SS or MM:SS format
+ * Example: 6332 -> "1:45:32", 2730 -> "45:30"
+ */
+export function formatWorkoutDurationHMS(val: number): string {
+  if (!val || val <= 0) return '0:00';
+
+  let totalSeconds = val;
+  // Backward compatibility: if val is <= 300 and integer, it was saved as minutes in older logs
+  if (val <= 300 && Number.isInteger(val)) {
+    totalSeconds = val * 60;
+  }
+
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+
+  if (hours > 0) {
+    return `${hours}:${pad(minutes)}:${pad(seconds)}`;
+  }
+  return `${minutes}:${pad(seconds)}`;
+}
+
+/**
+ * Convert hours, minutes, seconds into total seconds
+ */
+export function toTotalSeconds(h = 0, m = 0, s = 0): number {
+  const safeH = Math.max(0, Number(h) || 0);
+  const safeM = Math.max(0, Number(m) || 0);
+  const safeS = Math.max(0, Number(s) || 0);
+  return (safeH * 3600) + (safeM * 60) + safeS;
+}
+
+/**
+ * Break total seconds into { hours, minutes, seconds }
+ */
+export function breakSeconds(val: number): { hours: number; minutes: number; seconds: number } {
+  if (!val || val <= 0) return { hours: 0, minutes: 0, seconds: 0 };
+  let totalSeconds = val;
+  if (val <= 300 && Number.isInteger(val)) {
+    totalSeconds = val * 60;
+  }
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = Math.floor(totalSeconds % 60);
+  return { hours, minutes, seconds };
 }

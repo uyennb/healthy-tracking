@@ -3,6 +3,7 @@ import { X, Save, Calendar, Dumbbell, Utensils, Zap, ShieldCheck } from 'lucide-
 import { DailyLog, Language } from '../../types/health';
 import { format } from 'date-fns';
 import { getTranslation } from '../../utils/i18n';
+import { formatWorkoutDurationHMS, toTotalSeconds, breakSeconds } from '../../utils/dateUtils';
 
 interface DailyLogModalProps {
   isOpen: boolean;
@@ -28,14 +29,19 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
     carbs: 220,
     fats: 60,
     fiber: 25,
-    workoutDuration: 45,
+    workoutDuration: 2700, // default 45 mins = 2700 seconds
     workoutCalo: 350,
     caloOut: 2300,
     note: '',
   });
 
+  const [timeHMS, setTimeHMS] = useState({ hours: 0, minutes: 45, seconds: 0 });
+
   useEffect(() => {
     if (initialLog) {
+      const dur = initialLog.workoutDuration || 0;
+      const b = breakSeconds(dur);
+      setTimeHMS(b);
       setFormData({
         date: initialLog.date,
         caloIn: initialLog.caloIn,
@@ -43,12 +49,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
         carbs: initialLog.carbs,
         fats: initialLog.fats,
         fiber: initialLog.fiber,
-        workoutDuration: initialLog.workoutDuration,
+        workoutDuration: dur,
         workoutCalo: initialLog.workoutCalo,
         caloOut: initialLog.caloOut,
         note: initialLog.note || '',
       });
     } else {
+      setTimeHMS({ hours: 0, minutes: 45, seconds: 0 });
       setFormData({
         date: format(new Date(), 'yyyy-MM-dd'),
         caloIn: 2100,
@@ -56,7 +63,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
         carbs: 220,
         fats: 60,
         fiber: 25,
-        workoutDuration: 45,
+        workoutDuration: 2700,
         workoutCalo: 350,
         caloOut: 2300,
         note: '',
@@ -64,71 +71,71 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
     }
   }, [initialLog, isOpen]);
 
+  const handleTimeChange = (h: number, m: number, s: number) => {
+    const safeH = Math.max(0, h);
+    const safeM = Math.max(0, Math.min(59, m));
+    const safeS = Math.max(0, Math.min(59, s));
+
+    setTimeHMS({ hours: safeH, minutes: safeM, seconds: safeS });
+    const totalSec = toTotalSeconds(safeH, safeM, safeS);
+    setFormData(prev => ({ ...prev, workoutDuration: totalSec }));
+  };
+
   if (!isOpen) return null;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave({
-      id: initialLog?.id,
-      date: formData.date,
-      caloIn: Number(formData.caloIn),
-      protein: Number(formData.protein),
-      carbs: Number(formData.carbs),
-      fats: Number(formData.fats),
-      fiber: Number(formData.fiber),
-      workoutDuration: Number(formData.workoutDuration),
-      workoutCalo: Number(formData.workoutCalo),
-      caloOut: Number(formData.caloOut),
-      note: formData.note,
-    });
+    onSave(initialLog?.id ? { ...formData, id: initialLog.id } : formData);
     onClose();
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-slate-900/60 backdrop-blur-sm p-0 sm:p-4 animate-fade-in">
-      <div className="bg-white w-full sm:max-w-lg rounded-t-3xl sm:rounded-3xl max-h-[90vh] flex flex-col shadow-2xl overflow-hidden border border-slate-100">
-        {/* Modal Header */}
-        <div className="px-5 py-4 bg-gradient-to-r from-emerald-500 to-teal-500 text-white flex items-center justify-between">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
+      <div className="bg-white rounded-3xl max-w-lg w-full p-5 shadow-2xl border border-slate-100 relative max-h-[90vh] overflow-y-auto">
+        {/* Header */}
+        <div className="flex items-center justify-between pb-3 border-b border-slate-100">
           <div className="flex items-center gap-2">
-            <Utensils className="w-5 h-5" />
-            <h2 className="font-extrabold text-base">
+            <div className="w-8 h-8 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center font-bold">
+              <Zap className="w-4 h-4" />
+            </div>
+            <h3 className="font-extrabold text-slate-800 text-base">
               {initialLog ? t.editLogTitle : t.addLogTitle}
-            </h2>
+            </h3>
           </div>
           <button
             onClick={onClose}
-            className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition active:scale-95 text-white"
+            className="p-1.5 text-slate-400 hover:text-slate-600 rounded-full hover:bg-slate-100 transition"
           >
             <X className="w-5 h-5" />
           </button>
         </div>
 
-        {/* Modal Body */}
-        <form onSubmit={handleSubmit} className="p-5 overflow-y-auto space-y-4 flex-1">
-          {/* Date Picker */}
+        {/* Form */}
+        <form onSubmit={handleSubmit} className="mt-4 space-y-4">
+          {/* Log Date */}
           <div>
-            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1.5">
-              <Calendar className="w-3.5 h-3.5 text-emerald-600" /> Ngày ghi nhận
+            <label className="block text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+              <Calendar className="w-3.5 h-3.5 text-emerald-600" /> {t.dateLabel}
             </label>
             <input
               type="date"
               required
               value={formData.date}
               onChange={e => setFormData({ ...formData, date: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 font-semibold text-slate-800 text-sm focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
             />
           </div>
 
-          {/* Section: Calorie & Energy */}
-          <div className="bg-slate-50/80 p-3.5 rounded-2xl border border-slate-100 space-y-3">
+          {/* Section: Calorie Balance */}
+          <div className="bg-indigo-50/50 p-3.5 rounded-2xl border border-indigo-100 space-y-3">
             <h3 className="text-xs font-bold text-indigo-700 uppercase tracking-wider flex items-center gap-1.5">
-              <Zap className="w-3.5 h-3.5 text-indigo-600" /> Cân Bằng Năng Lượng (Calo)
+              <Zap className="w-3.5 h-3.5 text-indigo-600" /> {t.energySection}
             </h3>
-            
+
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                  Calo nạp vào (Calo-in)
+                <label className="block text-[11px] font-bold text-indigo-900 mb-1">
+                  {t.caloInLabel}
                 </label>
                 <div className="relative">
                   <input
@@ -137,15 +144,15 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                     required
                     value={formData.caloIn}
                     onChange={e => setFormData({ ...formData, caloIn: Number(e.target.value) })}
-                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-indigo-600 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
+                    className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-sm font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">kcal</span>
                 </div>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                  Tổng Calo tiêu thụ (TDEE)
+                <label className="block text-[11px] font-bold text-rose-900 mb-1">
+                  {t.caloOutLabel}
                 </label>
                 <div className="relative">
                   <input
@@ -154,7 +161,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                     required
                     value={formData.caloOut}
                     onChange={e => setFormData({ ...formData, caloOut: Number(e.target.value) })}
-                    className="w-full bg-white border border-slate-200 rounded-xl px-3 py-2 text-sm font-bold text-rose-600 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
+                    className="w-full bg-white border border-rose-200 rounded-xl px-3 py-2 text-sm font-bold text-rose-700 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">kcal</span>
                 </div>
@@ -163,12 +170,12 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
           </div>
 
           {/* Section: Nutrients */}
-          <div className="bg-amber-50/40 p-3.5 rounded-2xl border border-amber-100/60 space-y-3">
-            <h3 className="text-xs font-bold text-amber-700 uppercase tracking-wider flex items-center gap-1.5">
-              <ShieldCheck className="w-3.5 h-3.5 text-amber-600" /> Khối Lượng Chất Dinh Dưỡng
+          <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-200/80 space-y-3">
+            <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">
+              <Utensils className="w-3.5 h-3.5 text-emerald-600" /> {t.macroSection}
             </h3>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
               <div>
                 <label className="block text-[11px] font-bold text-blue-700 mb-1">
                   Protein (Đạm)
@@ -239,69 +246,114 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
             </div>
           </div>
 
-          {/* Section: Workout */}
+          {/* Section: Workout - HH:MM:SS format */}
           <div className="bg-purple-50/50 p-3.5 rounded-2xl border border-purple-100 space-y-3">
-            <h3 className="text-xs font-bold text-purple-700 uppercase tracking-wider flex items-center gap-1.5">
-              <Dumbbell className="w-3.5 h-3.5 text-purple-600" /> Thống Kê Luyện Tập
-            </h3>
+            <div className="flex items-center justify-between">
+              <h3 className="text-xs font-bold text-purple-700 uppercase tracking-wider flex items-center gap-1.5">
+                <Dumbbell className="w-3.5 h-3.5 text-purple-600" /> {t.workoutSection}
+              </h3>
+              <span className="text-xs font-black text-purple-800 bg-purple-100/90 px-2.5 py-0.5 rounded-lg border border-purple-200 font-mono shadow-sm">
+                ⏱️ {formatWorkoutDurationHMS(formData.workoutDuration)}
+              </span>
+            </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                  Thời gian tập
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.workoutDuration}
-                    onChange={e => setFormData({ ...formData, workoutDuration: Number(e.target.value) })}
-                    className="w-full bg-white border border-purple-200 rounded-xl px-3 py-2 text-sm font-bold text-purple-600 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
-                  />
-                  <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">phút</span>
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-bold text-slate-600">
+                {t.workoutDurationLabel} (Giờ : Phút : Giây)
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="24"
+                      placeholder="0"
+                      value={timeHMS.hours || ''}
+                      onChange={e => handleTimeChange(Number(e.target.value), timeHMS.minutes, timeHMS.seconds)}
+                      className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                    />
+                    <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Giờ (h)</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      placeholder="0"
+                      value={timeHMS.minutes || ''}
+                      onChange={e => handleTimeChange(timeHMS.hours, Number(e.target.value), timeHMS.seconds)}
+                      className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                    />
+                    <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Phút (m)</span>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min="0"
+                      max="59"
+                      placeholder="0"
+                      value={timeHMS.seconds || ''}
+                      onChange={e => handleTimeChange(timeHMS.hours, timeHMS.minutes, Number(e.target.value))}
+                      className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                    />
+                    <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Giây (s)</span>
+                  </div>
                 </div>
               </div>
+            </div>
 
-              <div>
-                <label className="block text-[11px] font-bold text-slate-600 mb-1">
-                  Calo bài tập
-                </label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.workoutCalo}
-                    onChange={e => setFormData({ ...formData, workoutCalo: Number(e.target.value) })}
-                    className="w-full bg-white border border-purple-200 rounded-xl px-3 py-2 text-sm font-bold text-purple-600 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
-                  />
-                  <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">kcal</span>
-                </div>
+            <div>
+              <label className="block text-[11px] font-bold text-slate-600 mb-1">
+                {t.workoutCaloLabel} (kcal)
+              </label>
+              <div className="relative">
+                <input
+                  type="number"
+                  min="0"
+                  required
+                  value={formData.workoutCalo}
+                  onChange={e => setFormData({ ...formData, workoutCalo: Number(e.target.value) })}
+                  className="w-full bg-white border border-purple-200 rounded-xl px-3 py-2 text-sm font-bold text-purple-600 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
+                />
+                <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">kcal</span>
               </div>
             </div>
           </div>
 
           {/* Note */}
           <div>
-            <label className="block text-xs font-bold text-slate-600 mb-1">Ghi chú (Tùy chọn)</label>
+            <label className="block text-xs font-bold text-slate-700 mb-1">{t.noteLabel}</label>
             <input
               type="text"
-              placeholder="VD: Tập cardio nhẹ, ăn bù calo..."
               value={formData.note}
               onChange={e => setFormData({ ...formData, note: e.target.value })}
+              placeholder="VD: Chạy bộ sáng 5km, tập ngực 45p..."
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-medium text-slate-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
             />
           </div>
 
-          {/* Submit Button */}
-          <div className="pt-2">
+          {/* Buttons */}
+          <div className="pt-3 flex gap-2">
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 py-3 text-xs font-bold text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-xl transition"
+            >
+              Hủy
+            </button>
             <button
               type="submit"
-              className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 text-white font-extrabold py-3 px-4 rounded-xl shadow-md shadow-emerald-500/25 hover:shadow-emerald-500/40 active:scale-[0.98] transition flex items-center justify-center gap-2"
+              className="flex-1 py-3 text-xs font-extrabold text-white bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 rounded-xl shadow-md shadow-emerald-500/20 transition flex items-center justify-center gap-1.5"
             >
               <Save className="w-4 h-4" />
-              <span>{initialLog ? 'Cập Nhật Bản Ghi' : 'Lưu Nhật Ký Ngày'}</span>
+              <span>{initialLog ? t.updateLog : t.saveLog}</span>
             </button>
           </div>
         </form>

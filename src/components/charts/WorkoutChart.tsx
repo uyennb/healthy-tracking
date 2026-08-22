@@ -13,6 +13,7 @@ import {
 } from 'recharts';
 import { DisplayMode, AggregatedData, Language } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
+import { formatWorkoutDurationHMS } from '../../utils/dateUtils';
 
 interface WorkoutChartProps {
   data: AggregatedData[];
@@ -44,7 +45,7 @@ export const WorkoutChart: React.FC<WorkoutChartProps> = ({ data, mode, language
                   {p.name}:
                 </span>
                 <span className="font-extrabold">
-                  {p.value} {p.dataKey === 'workoutDuration' ? t.unitMin : 'kcal'}
+                  {p.dataKey === 'workoutDuration' ? formatWorkoutDurationHMS(p.value) : `${p.value} kcal`}
                 </span>
               </div>
             ))}
