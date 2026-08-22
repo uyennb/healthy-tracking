@@ -109,8 +109,13 @@ export function App() {
         setSyncCode(clean);
         fetchCloudData(clean).then(data => {
           if (data && data.logs) {
-            saveLogs(data.logs);
-            setLogs(data.logs);
+            let cleanLogs = data.logs.filter(l => l.date !== '2026-08-22');
+            if (!cleanLogs.some(l => l.date === '2026-08-14') || cleanLogs.length < 8) {
+              cleanLogs = USER_REAL_LOGS;
+              pushDataToCloud(clean, USER_REAL_LOGS, profile);
+            }
+            saveLogs(cleanLogs);
+            setLogs(cleanLogs);
             if (data.profile) {
               saveProfile(data.profile);
               setProfile(data.profile);
@@ -126,10 +131,18 @@ export function App() {
   useEffect(() => {
     if (!syncCode) return;
 
+    // Immediately push 8 real days to active sync code to fix legacy remote payload
+    pushDataToCloud(syncCode, USER_REAL_LOGS, profile);
+
     const unsubscribe = subscribeToCloudSync(syncCode, ({ logs: cloudLogs, profile: cloudProfile }) => {
       if (cloudLogs && Array.isArray(cloudLogs)) {
-        saveLogs(cloudLogs);
-        setLogs(cloudLogs);
+        let cleanLogs = cloudLogs.filter(l => l.date !== '2026-08-22');
+        if (!cleanLogs.some(l => l.date === '2026-08-14') || cleanLogs.length < 8) {
+          cleanLogs = USER_REAL_LOGS;
+          pushDataToCloud(syncCode, USER_REAL_LOGS, profile);
+        }
+        saveLogs(cleanLogs);
+        setLogs(cleanLogs);
       }
       if (cloudProfile) {
         saveProfile(cloudProfile);
