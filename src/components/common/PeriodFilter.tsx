@@ -21,6 +21,7 @@ export const PeriodFilter: React.FC<PeriodFilterProps> = ({
   const t = getTranslation(language);
 
   const periods: { id: PeriodType; label: string }[] = [
+    { id: 'all', label: t.periodAll },
     { id: 'week', label: t.periodWeek },
     { id: 'month', label: t.periodMonth },
     { id: 'quarter', label: t.periodQuarter },
@@ -42,8 +43,8 @@ export const PeriodFilter: React.FC<PeriodFilterProps> = ({
         )}
       </div>
 
-      {/* Period Selector Tabs */}
-      <div className="grid grid-cols-5 gap-1 bg-slate-100/80 p-1 rounded-xl">
+      {/* Period Selector Tabs - 6 columns including 'All Time' */}
+      <div className="grid grid-cols-6 gap-1 bg-slate-100/80 p-1 rounded-xl">
         {periods.map(p => (
           <button
             key={p.id}
@@ -59,30 +60,30 @@ export const PeriodFilter: React.FC<PeriodFilterProps> = ({
         ))}
       </div>
 
-      {/* Custom Date Range Picker Input */}
+      {/* Custom Date Range Picker */}
       {period === 'custom' && (
-        <div className="mt-3 pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2 text-xs">
-          <div className="flex-1 min-w-[130px]">
-            <label className="block text-[10px] font-semibold text-slate-500 mb-1 flex items-center gap-1">
-              <Calendar className="w-3 h-3 text-slate-400" /> {t.fromDate}
+        <div className="mt-3 pt-3 border-t border-slate-100 grid grid-cols-2 gap-2 animate-fadeIn">
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-500 mb-1 flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-emerald-600" /> {t.fromDate}
             </label>
             <input
               type="date"
               value={customRange.startDate}
               onChange={e => onChangeCustomRange({ ...customRange, startDate: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
             />
           </div>
 
-          <div className="flex-1 min-w-[130px]">
-            <label className="block text-[10px] font-semibold text-slate-500 mb-1 flex items-center gap-1">
-              <Calendar className="w-3 h-3 text-slate-400" /> {t.toDate}
+          <div>
+            <label className="block text-[11px] font-semibold text-slate-500 mb-1 flex items-center gap-1">
+              <Calendar className="w-3 h-3 text-emerald-600" /> {t.toDate}
             </label>
             <input
               type="date"
               value={customRange.endDate}
               onChange={e => onChangeCustomRange({ ...customRange, endDate: e.target.value })}
-              className="w-full bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
+              className="w-full bg-slate-50 border border-slate-200 rounded-xl px-2.5 py-1.5 text-xs font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
             />
           </div>
         </div>

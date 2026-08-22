@@ -12,6 +12,7 @@ export const translations = {
     navData: 'Dữ liệu',
     
     // Periods
+    periodAll: 'Tất cả',
     periodWeek: 'Tuần',
     periodMonth: 'Tháng',
     periodQuarter: 'Quý',
@@ -143,6 +144,7 @@ export const translations = {
     navData: 'Data',
 
     // Periods
+    periodAll: 'All Time',
     periodWeek: 'Week',
     periodMonth: 'Month',
     periodQuarter: 'Quarter',

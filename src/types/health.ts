@@ -12,7 +12,7 @@ export interface DailyLog {
   note?: string;
 }
 
-export type PeriodType = 'week' | 'month' | 'quarter' | 'year' | 'custom';
+export type PeriodType = 'all' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
 
 export type DisplayMode = 'bar' | 'line' | 'table';
 

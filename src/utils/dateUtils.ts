@@ -11,11 +11,11 @@ import {
   startOfYear, 
   endOfYear,
   subDays,
-  eachDayOfInterval,
-  isSameDay
+  startOfDay,
+  endOfDay,
 } from 'date-fns';
-import { vi } from 'date-fns/locale';
-import { DailyLog, PeriodType, CustomDateRange, AggregatedData } from '../types/health';
+import { vi, enUS } from 'date-fns/locale';
+import { DailyLog, PeriodType, CustomDateRange, AggregatedData, Language } from '../types/health';
 
 /**
  * Filter logs based on period selection
@@ -26,9 +26,13 @@ export function filterLogsByPeriod(
   customRange?: CustomDateRange,
   refDate: Date = new Date()
 ): DailyLog[] {
+  if (period === 'all') {
+    return [...logs].sort((a, b) => a.date.localeCompare(b.date));
+  }
+
   if (period === 'custom' && customRange?.startDate && customRange?.endDate) {
-    const start = parseISO(customRange.startDate);
-    const end = parseISO(customRange.endDate);
+    const start = startOfDay(parseISO(customRange.startDate));
+    const end = endOfDay(parseISO(customRange.endDate));
     return logs.filter(log => {
       const d = parseISO(log.date);
       return isWithinInterval(d, { start, end });
@@ -36,27 +40,27 @@ export function filterLogsByPeriod(
   }
 
   let start: Date;
-  let end: Date = refDate;
+  let end: Date = endOfDay(refDate);
 
   switch (period) {
     case 'week':
-      start = startOfWeek(refDate, { weekStartsOn: 1 });
-      end = endOfWeek(refDate, { weekStartsOn: 1 });
+      start = startOfDay(startOfWeek(refDate, { weekStartsOn: 1 }));
+      end = endOfDay(endOfWeek(refDate, { weekStartsOn: 1 }));
       break;
     case 'month':
-      start = startOfMonth(refDate);
-      end = endOfMonth(refDate);
+      start = startOfDay(startOfMonth(refDate));
+      end = endOfDay(endOfMonth(refDate));
       break;
     case 'quarter':
-      start = startOfQuarter(refDate);
-      end = endOfQuarter(refDate);
+      start = startOfDay(startOfQuarter(refDate));
+      end = endOfDay(endOfQuarter(refDate));
       break;
     case 'year':
-      start = startOfYear(refDate);
-      end = endOfYear(refDate);
+      start = startOfDay(startOfYear(refDate));
+      end = endOfDay(endOfYear(refDate));
       break;
     default:
-      start = subDays(refDate, 7);
+      start = startOfDay(subDays(refDate, 30));
       break;
   }
 
@@ -72,7 +76,7 @@ export function filterLogsByPeriod(
 export function processChartData(logs: DailyLog[]): AggregatedData[] {
   return logs.map(log => {
     const dateObj = parseISO(log.date);
-    // Display label: e.g. "22/08" (chỉ ngày, tháng)
+    // Display label: e.g. "22/08"
     const label = format(dateObj, 'dd/MM');
     return {
       label,
@@ -151,9 +155,6 @@ export function calculateSummary(logs: DailyLog[]) {
   };
 }
 
-import { enUS } from 'date-fns/locale';
-import { Language } from '../types/health';
-
 export function formatDateLang(dateStr: string, lang: Language = 'vi'): string {
   try {
     const loc = lang === 'en' ? enUS : vi;
@@ -162,4 +163,3 @@ export function formatDateLang(dateStr: string, lang: Language = 'vi'): string {
     return dateStr;
   }
 }
-
