@@ -117,15 +117,15 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
             <div className="flex flex-col gap-2">
               <button
                 onClick={() => {
-                  if (window.confirm('Nạp lại dữ liệu 60 ngày mẫu mới nhất?')) {
+                  if (window.confirm('Nạp lại 8 ngày dữ liệu thật của bạn (14/8 - 21/8)?')) {
                     onResetSample();
                     onClose();
                   }
                 }}
-                className="flex items-center justify-center gap-2 bg-amber-500 hover:bg-amber-600 text-white font-bold text-xs py-2.5 px-3 rounded-xl transition active:scale-95"
+                className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl transition active:scale-95 shadow-sm"
               >
                 <RefreshCw className="w-4 h-4" />
-                <span>Nạp Lại 60 Ngày Dữ Liệu Mẫu</span>
+                <span>⚡ Nạp Lại 8 Ngày Dữ Liệu Thật (14/8 - 21/8)</span>
               </button>
 
               <button

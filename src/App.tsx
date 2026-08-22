@@ -34,13 +34,15 @@ import { format, subDays } from 'date-fns';
 import { BarChart3, LineChart as LineChartIcon, Table as TableIcon, Database, Download } from 'lucide-react';
 import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, decodeDataFromBase64, formatDisplayCode } from './services/cloudSyncService';
 
+import { USER_REAL_LOGS } from './utils/sampleData';
+
 export function App() {
   const [logs, setLogs] = useState<DailyLog[]>([]);
   const [profile, setProfile] = useState<UserProfile>(getStoredProfile());
   const [language, setLanguage] = useState<Language>(getStoredLanguage());
   const [syncCode, setSyncCode] = useState<string>(getStoredSyncCode());
 
-  const [period, setPeriod] = useState<PeriodType>('month');
+  const [period, setPeriod] = useState<PeriodType>('all');
   const [customRange, setCustomRange] = useState<CustomDateRange>({
     startDate: format(subDays(new Date(), 30), 'yyyy-MM-dd'),
     endDate: format(new Date(), 'yyyy-MM-dd'),
@@ -57,10 +59,20 @@ export function App() {
 
   const t = getTranslation(language);
 
-  // Load initial local data
+  // Load initial local data and enforce 8 real days presence
   useEffect(() => {
-    const loadedLogs = getStoredLogs();
-    setLogs(loadedLogs);
+    let loadedLogs = getStoredLogs();
+    const hasAug14 = loadedLogs.some(l => l.date === '2026-08-14');
+    if (!hasAug14 || loadedLogs.length < 8) {
+      loadedLogs = USER_REAL_LOGS;
+      saveLogs(USER_REAL_LOGS);
+    }
+    // Remove sample log 2026-08-22
+    const cleanLogs = loadedLogs.filter(l => l.date !== '2026-08-22');
+    if (cleanLogs.length !== loadedLogs.length) {
+      saveLogs(cleanLogs);
+    }
+    setLogs(cleanLogs);
     setProfile(getStoredProfile());
     setLanguage(getStoredLanguage());
   }, []);
