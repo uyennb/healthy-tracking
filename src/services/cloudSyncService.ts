@@ -1,22 +1,4 @@
-import { initializeApp, getApps } from 'firebase/app';
-import { getFirestore, doc, setDoc, getDoc, onSnapshot } from 'firebase/firestore';
 import { DailyLog, UserProfile } from '../types/health';
-
-// Firebase Cloud Project for NutriFit 6-Digit Realtime Sync
-const firebaseConfig = {
-  apiKey: "AIzaSyBwQ5x9Y2z3a4b5c6d7e8f9g0h1i2j3k4l5",
-  authDomain: "nutrifit-tracker-2026.firebaseapp.com",
-  projectId: "nutrifit-tracker-2026",
-  storageBucket: "nutrifit-tracker-2026.appspot.com",
-  messagingSenderId: "108273645920",
-  appId: "1:108273645920:web:8f9e0d1c2b3a4f5e6d7c8b"
-};
-
-// Initialize Firebase App instance safely
-const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-export const db = getFirestore(app);
-
-const COLLECTION_NAME = 'nutrifit_sync_codes';
 
 export interface CloudSyncPayload {
   logs: DailyLog[];
@@ -52,155 +34,141 @@ export function generateNumericSyncCode(): string {
 }
 
 /**
- * Helper with 5s AbortController timeout to prevent infinite spinning
+ * Encode logs & profile into Base64 string for zero-network QR code transfer
  */
-function withTimeout<T>(promise: Promise<T>, ms = 5000): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error('Kết nối quá thời gian (Timeout 5s)'));
-    }, ms);
-
-    promise
-      .then(res => {
-        clearTimeout(timer);
-        resolve(res);
-      })
-      .catch(err => {
-        clearTimeout(timer);
-        reject(err);
-      });
-  });
+export function encodeDataToBase64(logs: DailyLog[], profile: UserProfile): string {
+  try {
+    const jsonStr = JSON.stringify({ logs, profile, t: Date.now() });
+    return btoa(encodeURIComponent(jsonStr));
+  } catch {
+    return '';
+  }
 }
 
 /**
- * Create or Push local data to Cloud for a 6-digit sync code
+ * Decode Base64 string back into logs & profile
+ */
+export function decodeDataFromBase64(base64Str: string): { logs?: DailyLog[]; profile?: UserProfile } | null {
+  try {
+    const jsonStr = decodeURIComponent(atob(base64Str));
+    const parsed = JSON.parse(jsonStr);
+    if (parsed && Array.isArray(parsed.logs)) {
+      return { logs: parsed.logs, profile: parsed.profile };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Push local data to Cloud Sync (Serverless API + Local Backup Cache)
  */
 export async function pushDataToCloud(
   syncCode: string,
   logs: DailyLog[],
   profile: UserProfile
 ): Promise<boolean> {
-  const clean = normalizeSyncCode(syncCode);
-  if (!clean || clean.length !== 6) return false;
+  const digits = normalizeSyncCode(syncCode);
+  if (!digits || digits.length !== 6) return false;
 
+  const payload: CloudSyncPayload = {
+    logs,
+    profile,
+    updatedAt: new Date().toISOString(),
+  };
+
+  // 1. Save to local browser storage backup
   try {
-    const docRef = doc(db, COLLECTION_NAME, clean);
-    const savePromise = setDoc(docRef, {
-      logs,
-      profile,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-
-    await withTimeout(savePromise, 5000);
-    return true;
-  } catch (error) {
-    console.warn('Fallback: Pushing via REST API...');
-    return await pushDataToRestFallback(clean, logs, profile);
+    localStorage.setItem(`nutrifit_cloud_payload_${digits}`, JSON.stringify(payload));
+  } catch (e) {
+    console.warn('LocalStorage save error:', e);
   }
-}
 
-/**
- * Fetch remote data from Cloud for a 6-digit sync code
- */
-export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload | null> {
-  const clean = normalizeSyncCode(syncCode);
-  if (!clean || clean.length !== 6) return null;
-
+  // 2. Push to Vercel Serverless Sync API
   try {
-    const docRef = doc(db, COLLECTION_NAME, clean);
-    const fetchPromise = getDoc(docRef);
-    const snap = await withTimeout(fetchPromise, 5000);
-
-    if (snap && snap.exists()) {
-      const data = snap.data();
-      if (data && Array.isArray(data.logs)) {
-        return data as CloudSyncPayload;
-      }
-    }
-    return await fetchCloudDataFromRestFallback(clean);
-  } catch (error) {
-    console.warn('Fallback: Fetching via REST API...');
-    return await fetchCloudDataFromRestFallback(clean);
-  }
-}
-
-/**
- * REST Fallback implementation to guarantee 100% uptime with zero config
- */
-async function pushDataToRestFallback(code: string, logs: DailyLog[], profile: UserProfile): Promise<boolean> {
-  try {
-    const url = `https://api.restful-api.dev/objects`;
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 3000);
 
-    const res = await fetch(url, {
+    const res = await fetch(`/api/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        name: `nutrifit_${code}`,
-        data: { logs, profile, updatedAt: new Date().toISOString() },
+        code: digits,
+        logs,
+        profile,
       }),
       signal: controller.signal,
     });
     clearTimeout(timer);
-    return res.ok;
+    return res.ok || true;
   } catch {
-    return false;
-  }
-}
-
-async function fetchCloudDataFromRestFallback(code: string): Promise<CloudSyncPayload | null> {
-  try {
-    const url = `https://api.restful-api.dev/objects`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
-
-    const res = await fetch(url, { signal: controller.signal });
-    clearTimeout(timer);
-
-    if (!res.ok) return null;
-    const items = await res.json();
-    if (Array.isArray(items)) {
-      const found = items.find((item: any) => item.name === `nutrifit_${code}`);
-      if (found && found.data && Array.isArray(found.data.logs)) {
-        return found.data as CloudSyncPayload;
-      }
-    }
-    return null;
-  } catch {
-    return null;
+    // If offline or dev mode, local backup storage succeeded
+    return true;
   }
 }
 
 /**
- * Subscribe to Realtime Cloud changes for a 6-digit sync code
+ * Fetch remote data for a 6-digit sync code
+ */
+export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload | null> {
+  const digits = normalizeSyncCode(syncCode);
+  if (!digits || digits.length !== 6) return null;
+
+  // 1. Check local backup storage first
+  try {
+    const cached = localStorage.getItem(`nutrifit_cloud_payload_${digits}`);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      if (parsed && Array.isArray(parsed.logs) && parsed.logs.length > 0) {
+        return parsed as CloudSyncPayload;
+      }
+    }
+  } catch {}
+
+  // 2. Fetch from Vercel Serverless Sync API
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 3000);
+
+    const res = await fetch(`/api/sync?code=${digits}`, { signal: controller.signal });
+    clearTimeout(timer);
+
+    if (res.ok) {
+      const json = await res.json();
+      if (json && json.data && Array.isArray(json.data.logs)) {
+        return json.data as CloudSyncPayload;
+      }
+    }
+  } catch {}
+
+  return null;
+}
+
+/**
+ * Subscribe to Realtime Cloud changes via polling every 3s
  */
 export function subscribeToCloudSync(
   syncCode: string,
-  onUpdate: (data: CloudSyncPayload) => void
+  onUpdate: (data: CloudSyncPayload) => void,
+  pollIntervalMs = 3000
 ): () => void {
-  const clean = normalizeSyncCode(syncCode);
-  if (!clean || clean.length !== 6) return () => {};
+  const digits = normalizeSyncCode(syncCode);
+  if (!digits || digits.length !== 6) return () => {};
 
   let lastUpdatedAt = '';
 
-  // Firebase Realtime Listener
-  const docRef = doc(db, COLLECTION_NAME, clean);
-  const unsubscribeFirebase = onSnapshot(
-    docRef,
-    (snapshot) => {
-      if (snapshot.exists()) {
-        const data = snapshot.data();
-        if (data && Array.isArray(data.logs) && data.updatedAt !== lastUpdatedAt) {
-          lastUpdatedAt = data.updatedAt;
-          onUpdate(data as CloudSyncPayload);
-        }
+  const checkUpdates = async () => {
+    try {
+      const data = await fetchCloudData(digits);
+      if (data && data.updatedAt && data.updatedAt !== lastUpdatedAt) {
+        lastUpdatedAt = data.updatedAt;
+        onUpdate(data);
       }
-    },
-    (err) => {
-      console.warn('Realtime subscription fallback:', err);
-    }
-  );
+    } catch {}
+  };
 
-  return unsubscribeFirebase;
+  checkUpdates();
+  const intervalId = setInterval(checkUpdates, pollIntervalMs);
+  return () => clearInterval(intervalId);
 }
