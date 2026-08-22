@@ -11,7 +11,7 @@ export const USER_REAL_LOGS: DailyLog[] = [
     fiber: 15,
     workoutDuration: 2387, // 39:47
     workoutCalo: 77,
-    caloOut: 1500,
+    caloOut: 1325,
     note: 'Strength Trainer',
   },
   {
@@ -24,7 +24,7 @@ export const USER_REAL_LOGS: DailyLog[] = [
     fiber: 15,
     workoutDuration: 1271, // 21:11
     workoutCalo: 228,
-    caloOut: 1500,
+    caloOut: 1642,
     note: 'Running',
   },
   {
@@ -37,7 +37,7 @@ export const USER_REAL_LOGS: DailyLog[] = [
     fiber: 11,
     workoutDuration: 6002, // 1:40:02
     workoutCalo: 142,
-    caloOut: 1500,
+    caloOut: 1353,
     note: 'Strength Trainer + Dance',
   },
   {
@@ -50,7 +50,7 @@ export const USER_REAL_LOGS: DailyLog[] = [
     fiber: 21,
     workoutDuration: 2937, // 48:57
     workoutCalo: 117,
-    caloOut: 1500,
+    caloOut: 1350,
     note: 'Strength Trainer',
   },
   {
@@ -63,7 +63,7 @@ export const USER_REAL_LOGS: DailyLog[] = [
     fiber: 11,
     workoutDuration: 6251, // 1:44:11
     workoutCalo: 96,
-    caloOut: 1500,
+    caloOut: 1246,
     note: 'Walking + Dance',
   },
   {
@@ -76,7 +76,7 @@ export const USER_REAL_LOGS: DailyLog[] = [
     fiber: 22,
     workoutDuration: 3662, // 1:01:02
     workoutCalo: 239,
-    caloOut: 1500,
+    caloOut: 1472,
     note: 'Strength Trainer',
   },
   {
@@ -89,7 +89,7 @@ export const USER_REAL_LOGS: DailyLog[] = [
     fiber: 11,
     workoutDuration: 1770, // 29:30
     workoutCalo: 47,
-    caloOut: 1500,
+    caloOut: 1299,
     note: 'Walking',
   },
   {
@@ -102,7 +102,7 @@ export const USER_REAL_LOGS: DailyLog[] = [
     fiber: 21,
     workoutDuration: 3234, // 53:54
     workoutCalo: 100,
-    caloOut: 1500,
+    caloOut: 1308,
     note: 'Strength Trainer + Yoga',
   },
 ];

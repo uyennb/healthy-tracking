@@ -17,7 +17,7 @@ export const DEFAULT_GOALS: UserGoals = {
   targetWorkoutMinutes: 45,
 };
 
-const REAL_DATA_MIGRATION_KEY = 'nutrifit_migrated_v3_real_8days';
+const REAL_DATA_MIGRATION_KEY = 'nutrifit_migrated_v4_exact_tdee';
 
 export function getStoredLogs(): DailyLog[] {
   try {
