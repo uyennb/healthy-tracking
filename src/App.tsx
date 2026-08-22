@@ -59,11 +59,13 @@ export function App() {
 
   const t = getTranslation(language);
 
-  // Load initial local data and enforce 8 real days presence
+  // Load initial local data and enforce 8 real days presence with exact TDEE
   useEffect(() => {
     let loadedLogs = getStoredLogs();
     const hasAug14 = loadedLogs.some(l => l.date === '2026-08-14');
-    if (!hasAug14 || loadedLogs.length < 8) {
+    const aug14 = loadedLogs.find(l => l.date === '2026-08-14');
+
+    if (!hasAug14 || loadedLogs.length < 8 || (aug14 && aug14.caloOut === 1500)) {
       loadedLogs = USER_REAL_LOGS;
       saveLogs(USER_REAL_LOGS);
     }
