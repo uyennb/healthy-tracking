@@ -58,7 +58,7 @@ export function App() {
   const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
 
   const [toastMsg, setToastMsg] = useState<string>('');
-  const lastLocalUpdateRef = React.useRef<number>(Date.now());
+  const lastLocalUpdateRef = React.useRef<number>(0);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -96,6 +96,7 @@ export function App() {
             saveSyncCode(clean);
             setSyncCode(clean);
           }
+          showToast(language === 'vi' ? '✅ Đã đồng bộ dữ liệu thành công!' : '✅ Synced data successfully!');
           window.history.replaceState({}, '', window.location.pathname);
           return;
         }
@@ -113,6 +114,7 @@ export function App() {
               saveProfile(data.profile);
               setProfile(data.profile);
             }
+            showToast(language === 'vi' ? '✅ Đã đồng bộ dữ liệu mới nhất thành công!' : '✅ Synced latest data successfully!');
           }
         });
         window.history.replaceState({}, '', window.location.pathname);
@@ -126,8 +128,8 @@ export function App() {
 
     const unsubscribe = subscribeToCloudSync(syncCode, ({ logs: cloudLogs, profile: cloudProfile, updatedAt }) => {
       const remoteTime = updatedAt ? new Date(updatedAt).getTime() : 0;
-      if (remoteTime > 0 && remoteTime < lastLocalUpdateRef.current) {
-        return; // Ignore stale remote data
+      if (lastLocalUpdateRef.current > 0 && remoteTime < lastLocalUpdateRef.current) {
+        return; // Ignore stale remote data only if local data was explicitly updated strictly after remote
       }
 
       if (cloudLogs && Array.isArray(cloudLogs) && cloudLogs.length > 0) {
@@ -145,6 +147,7 @@ export function App() {
 
   // Helper to auto-push local updates to Cloud
   const autoPushCloud = (newLogs: DailyLog[], newProfile: UserProfile = profile) => {
+    lastLocalUpdateRef.current = Date.now();
     if (syncCode) {
       pushDataToCloud(syncCode, newLogs, newProfile);
     }

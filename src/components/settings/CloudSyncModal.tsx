@@ -15,15 +15,17 @@ import {
 /**
  * Robust Dual-Layer Copy function working 100% across Mobile Safari, Chrome iOS, Android & WebViews
  */
-export function copyToClipboard(text: string): boolean {
+export async function copyToClipboard(text: string): Promise<boolean> {
   if (!text) return false;
 
   // Modern Clipboard API
   if (navigator.clipboard && window.isSecureContext) {
     try {
-      navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(text);
       return true;
-    } catch {}
+    } catch (err) {
+      console.warn('Clipboard API error, fallback to execCommand:', err);
+    }
   }
 
   // Robust Fallback for Mobile Safari / iOS / Zalo WebView
@@ -98,10 +100,9 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const isVI = language === 'vi';
   const displayCode = formatDisplayCode(syncCode);
 
-  // Build sync URL containing Base64 dataset for 100% instant 1-click sync
+  // Build clean, lightweight 1-click sync URL (~30 chars) to ensure zero phone lag & instant QR scanning
   const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const base64Data = encodeDataToBase64(logs, profile);
-  const qrUrl = `${currentUrl}?sync=${encodeURIComponent(displayCode)}&d=${base64Data}`;
+  const qrUrl = displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl;
 
   // Handle generating a new 6-digit numeric sync code
   const handleGenerateNewCode = async () => {
@@ -129,8 +130,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const handleConnectExistingCode = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Check if user pasted a full sync URL (e.g., https://...?sync=686-888&d=...)
-    if (inputCode.includes('sync=') || inputCode.includes('d=')) {
+    // Check if user pasted a full sync URL (e.g., https://...?sync=686-888)
+    if (inputCode.includes('sync=')) {
       try {
         window.location.href = inputCode.trim();
         return;
@@ -171,18 +172,23 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   };
 
   // Copy clean 6-digit formatted code to clipboard using dual-layer fallback
-  const handleCopyCode = () => {
+  const handleCopyCode = async () => {
     if (!displayCode) return;
-    copyToClipboard(displayCode);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2500);
+    const ok = await copyToClipboard(displayCode);
+    if (ok) {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2500);
+    }
   };
 
   // Copy instant 1-click sync link using dual-layer fallback
-  const handleCopyLink = () => {
-    copyToClipboard(qrUrl);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2500);
+  const handleCopyLink = async () => {
+    if (!qrUrl) return;
+    const ok = await copyToClipboard(qrUrl);
+    if (ok) {
+      setCopiedLink(true);
+      setTimeout(() => setCopiedLink(false), 2500);
+    }
   };
 
   return (

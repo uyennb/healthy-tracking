@@ -1,6 +1,17 @@
 // Vercel Serverless Function for NutriFit 6-Digit Realtime Cloud Sync
 const REST_URL = 'https://api.restful-api.dev/objects';
 
+// Global memory cache across warm serverless invocations
+if (!global.__nutrifit_sync_store) {
+  global.__nutrifit_sync_store = new Map();
+}
+if (!global.__nutrifit_code_index) {
+  global.__nutrifit_code_index = new Map();
+}
+
+const memoryStore = global.__nutrifit_sync_store;
+const codeIndex = global.__nutrifit_code_index;
+
 export default async function handler(req, res) {
   // CORS Headers
   res.setHeader('Access-Control-Allow-Credentials', 'true');
@@ -37,51 +48,64 @@ export default async function handler(req, res) {
         updatedAt: new Date().toISOString(),
       };
 
-      // Check existing object to update or create
+      // 1. Cache in memory
+      memoryStore.set(cleanCode, payload);
+
+      // 2. Persist remotely
       try {
-        const fetchRes = await fetch(REST_URL);
-        if (fetchRes.ok) {
-          const items = await fetchRes.json();
-          if (Array.isArray(items)) {
-            const existing = items.find((item) => item.name === objectName);
-            if (existing && existing.id) {
-              await fetch(`${REST_URL}/${existing.id}`, {
-                method: 'PUT',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ name: objectName, data: payload }),
-              });
-              return res.status(200).json({ success: true, code: cleanCode, payload });
-            }
+        const existingId = codeIndex.get(cleanCode);
+        if (existingId) {
+          const putRes = await fetch(`${REST_URL}/${existingId}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: objectName, data: payload }),
+          });
+          if (putRes.ok) {
+            return res.status(200).json({ success: true, code: cleanCode, payload });
+          }
+        }
+
+        const postRes = await fetch(REST_URL, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: objectName, data: payload }),
+        });
+
+        if (postRes.ok) {
+          const created = await postRes.json();
+          if (created && created.id) {
+            codeIndex.set(cleanCode, created.id);
           }
         }
       } catch (e) {
-        console.warn('REST update fallback error:', e);
+        console.warn('REST update fallback warning:', e);
       }
-
-      // Create new object if not found
-      await fetch(REST_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: objectName, data: payload }),
-      });
 
       return res.status(200).json({ success: true, code: cleanCode, payload });
     }
 
     if (req.method === 'GET') {
-      try {
-        const fetchRes = await fetch(REST_URL);
-        if (fetchRes.ok) {
-          const items = await fetchRes.json();
-          if (Array.isArray(items)) {
-            const found = items.find((item) => item.name === objectName);
-            if (found && found.data && Array.isArray(found.data.logs)) {
-              return res.status(200).json({ success: true, data: found.data });
+      // 1. Fast memory cache lookup
+      if (memoryStore.has(cleanCode)) {
+        const payload = memoryStore.get(cleanCode);
+        return res.status(200).json({ success: true, data: payload });
+      }
+
+      // 2. Fetch by persisted ID lookup
+      const existingId = codeIndex.get(cleanCode);
+      if (existingId) {
+        try {
+          const fetchRes = await fetch(`${REST_URL}/${existingId}`);
+          if (fetchRes.ok) {
+            const item = await fetchRes.json();
+            if (item && item.data && Array.isArray(item.data.logs)) {
+              memoryStore.set(cleanCode, item.data);
+              return res.status(200).json({ success: true, data: item.data });
             }
           }
+        } catch (e) {
+          console.warn('REST fetch by ID error:', e);
         }
-      } catch (e) {
-        console.warn('REST fetch fallback error:', e);
       }
 
       return res.status(404).json({ error: 'Chưa có dữ liệu cho mã 6 số này' });
