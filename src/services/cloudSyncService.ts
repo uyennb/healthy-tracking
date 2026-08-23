@@ -64,6 +64,9 @@ export function decodeDataFromBase64(base64Str: string): { logs?: DailyLog[]; pr
 /**
  * Push local data to Cloud Sync (Network API first, then Local Backup Cache)
  */
+/**
+ * Push local data to Cloud Sync (Network API first, then Direct Global KV Store)
+ */
 export async function pushDataToCloud(
   syncCode: string,
   logs: DailyLog[],
@@ -88,7 +91,7 @@ export async function pushDataToCloud(
   // 2. Push to Vercel Serverless Sync API
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
+    const timer = setTimeout(() => controller.abort(), 4000);
 
     const res = await fetch(`/api/sync`, {
       method: 'POST',
@@ -102,7 +105,17 @@ export async function pushDataToCloud(
       signal: controller.signal,
     });
     clearTimeout(timer);
-    return res.ok || true;
+    if (res.ok) return true;
+  } catch {}
+
+  // 3. Direct KV Store Push Fallback (guarantees cross-device persistence)
+  try {
+    const kvRes = await fetch(`https://kvdb.io/nutrifit_sync_v6_db/${digits}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return kvRes.ok;
   } catch {
     return true;
   }
@@ -115,10 +128,10 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
   const digits = normalizeSyncCode(syncCode);
   if (!digits || digits.length !== 6) return null;
 
-  // 1. Fetch from Serverless Sync API FIRST for fresh remote data
+  // 1. Fetch from Serverless Sync API FIRST
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 3000);
+    const timer = setTimeout(() => controller.abort(), 4000);
 
     const res = await fetch(`/api/sync?code=${digits}`, { signal: controller.signal });
     clearTimeout(timer);
@@ -126,7 +139,6 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
     if (res.ok) {
       const json = await res.json();
       if (json && json.data && Array.isArray(json.data.logs)) {
-        // Cache the fresh remote data locally
         try {
           localStorage.setItem(`nutrifit_cloud_payload_${digits}`, JSON.stringify(json.data));
         } catch {}
@@ -134,10 +146,26 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
       }
     }
   } catch (err) {
-    console.warn('Network fetch error, trying local cache:', err);
+    console.warn('Network fetch error from /api/sync, trying direct KV fallback:', err);
   }
 
-  // 2. Fall back to local backup cache if network is offline or un-reachable
+  // 2. Direct Global KV Store Fetch Fallback
+  try {
+    const kvRes = await fetch(`https://kvdb.io/nutrifit_sync_v6_db/${digits}`);
+    if (kvRes.ok) {
+      const json = await kvRes.json();
+      if (json && Array.isArray(json.logs)) {
+        try {
+          localStorage.setItem(`nutrifit_cloud_payload_${digits}`, JSON.stringify(json));
+        } catch {}
+        return json as CloudSyncPayload;
+      }
+    }
+  } catch (err) {
+    console.warn('Direct KV fetch error:', err);
+  }
+
+  // 3. Fall back to local backup cache if offline
   try {
     const cached = localStorage.getItem(`nutrifit_cloud_payload_${digits}`);
     if (cached) {

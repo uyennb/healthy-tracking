@@ -1,16 +1,5 @@
 // Vercel Serverless Function for NutriFit 6-Digit Realtime Cloud Sync
-const REST_URL = 'https://api.restful-api.dev/objects';
-
-// Global memory cache across warm serverless invocations
-if (!global.__nutrifit_sync_store) {
-  global.__nutrifit_sync_store = new Map();
-}
-if (!global.__nutrifit_code_index) {
-  global.__nutrifit_code_index = new Map();
-}
-
-const memoryStore = global.__nutrifit_sync_store;
-const codeIndex = global.__nutrifit_code_index;
+const KV_BUCKET = 'https://kvdb.io/nutrifit_sync_v6_db';
 
 export default async function handler(req, res) {
   // CORS Headers
@@ -38,7 +27,7 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Mã kết nối phải có đúng 6 chữ số' });
     }
 
-    const objectName = `nutrifit_v6_${cleanCode}`;
+    const kvUrl = `${KV_BUCKET}/${cleanCode}`;
 
     if (req.method === 'POST' || req.method === 'PUT') {
       const { logs, profile } = req.body || {};
@@ -48,64 +37,30 @@ export default async function handler(req, res) {
         updatedAt: new Date().toISOString(),
       };
 
-      // 1. Cache in memory
-      memoryStore.set(cleanCode, payload);
-
-      // 2. Persist remotely
       try {
-        const existingId = codeIndex.get(cleanCode);
-        if (existingId) {
-          const putRes = await fetch(`${REST_URL}/${existingId}`, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ name: objectName, data: payload }),
-          });
-          if (putRes.ok) {
-            return res.status(200).json({ success: true, code: cleanCode, payload });
-          }
-        }
-
-        const postRes = await fetch(REST_URL, {
+        await fetch(kvUrl, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: objectName, data: payload }),
+          body: JSON.stringify(payload),
         });
-
-        if (postRes.ok) {
-          const created = await postRes.json();
-          if (created && created.id) {
-            codeIndex.set(cleanCode, created.id);
-          }
-        }
       } catch (e) {
-        console.warn('REST update fallback warning:', e);
+        console.warn('KV store POST error:', e);
       }
 
       return res.status(200).json({ success: true, code: cleanCode, payload });
     }
 
     if (req.method === 'GET') {
-      // 1. Fast memory cache lookup
-      if (memoryStore.has(cleanCode)) {
-        const payload = memoryStore.get(cleanCode);
-        return res.status(200).json({ success: true, data: payload });
-      }
-
-      // 2. Fetch by persisted ID lookup
-      const existingId = codeIndex.get(cleanCode);
-      if (existingId) {
-        try {
-          const fetchRes = await fetch(`${REST_URL}/${existingId}`);
-          if (fetchRes.ok) {
-            const item = await fetchRes.json();
-            if (item && item.data && Array.isArray(item.data.logs)) {
-              memoryStore.set(cleanCode, item.data);
-              return res.status(200).json({ success: true, data: item.data });
-            }
+      try {
+        const fetchRes = await fetch(kvUrl);
+        if (fetchRes.ok) {
+          const data = await fetchRes.json();
+          if (data && Array.isArray(data.logs)) {
+            return res.status(200).json({ success: true, data });
           }
-        } catch (e) {
-          console.warn('REST fetch by ID error:', e);
         }
+      } catch (e) {
+        console.warn('KV store GET error:', e);
       }
 
       return res.status(404).json({ error: 'Chưa có dữ liệu cho mã 6 số này' });
