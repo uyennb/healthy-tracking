@@ -91,6 +91,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const [inputCode, setInputCode] = useState('');
   const [copied, setCopied] = useState(false);
   const [copiedLink, setCopiedLink] = useState(false);
+  const [pushed, setPushed] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [showQR, setShowQR] = useState(false);
@@ -103,6 +104,19 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   // Build clean, lightweight 1-click sync URL (~30 chars) to ensure zero phone lag & instant QR scanning
   const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
   const qrUrl = displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl;
+
+  const handleManualPush = async () => {
+    if (!syncCode) return;
+    setIsConnecting(true);
+    try {
+      await pushDataToCloud(syncCode, logs, profile);
+      setIsConnecting(false);
+      setPushed(true);
+      setTimeout(() => setPushed(false), 2500);
+    } catch {
+      setIsConnecting(false);
+    }
+  };
 
   // Handle generating a new 6-digit numeric sync code
   const handleGenerateNewCode = async () => {
@@ -300,6 +314,26 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                   onClick={e => (e.target as HTMLInputElement).select()}
                   className="w-full bg-slate-50 border border-teal-200 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-teal-900 focus:ring-1 focus:ring-teal-500 select-all font-semibold"
                 />
+
+                {/* Manual Push Button */}
+                <button
+                  type="button"
+                  disabled={isConnecting}
+                  onClick={handleManualPush}
+                  className="w-full mt-1.5 flex items-center justify-center gap-1.5 text-xs font-bold px-3 py-2 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition active:scale-95 disabled:opacity-50"
+                >
+                  {pushed ? (
+                    <>
+                      <Check className="w-3.5 h-3.5 text-emerald-600" />
+                      <span>{isVI ? '✅ Đã đẩy dữ liệu máy này lên Cloud!' : '✅ Uploaded local data to Cloud!'}</span>
+                    </>
+                  ) : (
+                    <>
+                      <RefreshCw className={`w-3.5 h-3.5 text-teal-600 ${isConnecting ? 'animate-spin' : ''}`} />
+                      <span>{isVI ? '📤 Đẩy dữ liệu máy này lên Cloud ngay' : 'Push local data to Cloud now'}</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
 

@@ -32,7 +32,7 @@ import { filterLogsByPeriod, processChartData } from './utils/dateUtils';
 import { getTranslation } from './utils/i18n';
 import { format, subDays } from 'date-fns';
 import { BarChart3, LineChart as LineChartIcon, Table as TableIcon, Database, Download } from 'lucide-react';
-import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, decodeDataFromBase64, formatDisplayCode } from './services/cloudSyncService';
+import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, decodeDataFromBase64, formatDisplayCode, mergeLogs } from './services/cloudSyncService';
 
 import { USER_REAL_LOGS } from './utils/sampleData';
 
@@ -67,12 +67,18 @@ export function App() {
 
   const t = getTranslation(language);
 
-  // Load initial local data
+  // Load initial local data & auto-push to cloud if syncCode is active
   useEffect(() => {
     const loadedLogs = getStoredLogs();
+    const storedProfile = getStoredProfile();
     setLogs(loadedLogs);
-    setProfile(getStoredProfile());
+    setProfile(storedProfile);
     setLanguage(getStoredLanguage());
+
+    const currentSyncCode = getStoredSyncCode();
+    if (currentSyncCode && loadedLogs && loadedLogs.length > 0) {
+      pushDataToCloud(currentSyncCode, loadedLogs, storedProfile);
+    }
   }, []);
 
   // Check URL query string for QR code or direct sync link (?sync=XXX-XXX&data=...)
@@ -85,8 +91,10 @@ export function App() {
       if (queryData) {
         const decoded = decodeDataFromBase64(queryData);
         if (decoded && decoded.logs && decoded.logs.length > 0) {
-          saveLogs(decoded.logs);
-          setLogs(decoded.logs);
+          const currentLocal = getStoredLogs();
+          const merged = mergeLogs(currentLocal, decoded.logs);
+          saveLogs(merged);
+          setLogs(merged);
           if (decoded.profile) {
             saveProfile(decoded.profile);
             setProfile(decoded.profile);
@@ -95,6 +103,7 @@ export function App() {
             const clean = formatDisplayCode(querySync);
             saveSyncCode(clean);
             setSyncCode(clean);
+            pushDataToCloud(clean, merged, decoded.profile || profile);
           }
           showToast(language === 'vi' ? '✅ Đã đồng bộ dữ liệu thành công!' : '✅ Synced data successfully!');
           window.history.replaceState({}, '', window.location.pathname);
@@ -107,14 +116,19 @@ export function App() {
         saveSyncCode(clean);
         setSyncCode(clean);
         fetchCloudData(clean).then(data => {
+          const currentLocal = getStoredLogs();
           if (data && data.logs && data.logs.length > 0) {
-            saveLogs(data.logs);
-            setLogs(data.logs);
+            const merged = mergeLogs(currentLocal, data.logs);
+            saveLogs(merged);
+            setLogs(merged);
             if (data.profile) {
               saveProfile(data.profile);
               setProfile(data.profile);
             }
+            pushDataToCloud(clean, merged, data.profile || profile);
             showToast(language === 'vi' ? '✅ Đã đồng bộ dữ liệu mới nhất thành công!' : '✅ Synced latest data successfully!');
+          } else if (currentLocal && currentLocal.length > 0) {
+            pushDataToCloud(clean, currentLocal, profile);
           }
         });
         window.history.replaceState({}, '', window.location.pathname);
@@ -133,8 +147,15 @@ export function App() {
       }
 
       if (cloudLogs && Array.isArray(cloudLogs) && cloudLogs.length > 0) {
-        saveLogs(cloudLogs);
-        setLogs(cloudLogs);
+        const currentLocal = getStoredLogs();
+        const merged = mergeLogs(currentLocal, cloudLogs);
+        saveLogs(merged);
+        setLogs(merged);
+
+        // If local merged dataset has extra entries (e.g. 22/8 log from phone), push back to cloud!
+        if (merged.length > cloudLogs.length) {
+          pushDataToCloud(syncCode, merged, cloudProfile || profile);
+        }
       }
       if (cloudProfile) {
         saveProfile(cloudProfile);
@@ -211,15 +232,19 @@ export function App() {
     saveSyncCode(code);
     setSyncCode(code);
 
-    if (cloudData && cloudData.logs) {
-      saveLogs(cloudData.logs);
-      setLogs(cloudData.logs);
+    const currentLocal = getStoredLogs();
+    if (cloudData && cloudData.logs && cloudData.logs.length > 0) {
+      const merged = mergeLogs(currentLocal, cloudData.logs);
+      saveLogs(merged);
+      setLogs(merged);
+      const targetProfile = cloudData.profile || profile;
       if (cloudData.profile) {
         saveProfile(cloudData.profile);
         setProfile(cloudData.profile);
       }
+      pushDataToCloud(code, merged, targetProfile);
     } else {
-      pushDataToCloud(code, logs, profile);
+      pushDataToCloud(code, currentLocal, profile);
     }
   };
 

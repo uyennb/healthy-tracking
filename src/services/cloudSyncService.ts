@@ -62,6 +62,48 @@ export function decodeDataFromBase64(base64Str: string): { logs?: DailyLog[]; pr
 }
 
 /**
+ * Safely merge local and remote daily logs by date without losing local entries
+ */
+export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): DailyLog[] {
+  if (!remote || remote.length === 0) return local || [];
+  if (!local || local.length === 0) return remote || [];
+
+  const map = new Map<string, DailyLog>();
+
+  // Add remote logs
+  remote.forEach(log => {
+    if (log && log.date) {
+      map.set(log.date, log);
+    }
+  });
+
+  // Merge local logs, prioritizing local non-empty entries
+  local.forEach(log => {
+    if (log && log.date) {
+      const existing = map.get(log.date);
+      if (!existing) {
+        map.set(log.date, log);
+      } else {
+        map.set(log.date, {
+          ...existing,
+          ...log,
+          caloIn: log.caloIn || existing.caloIn || 0,
+          caloOut: log.caloOut || existing.caloOut || 0,
+          protein: log.protein || existing.protein || 0,
+          carbs: log.carbs || existing.carbs || 0,
+          fats: log.fats || existing.fats || 0,
+          workoutDuration: log.workoutDuration || existing.workoutDuration || 0,
+          workoutCalo: log.workoutCalo || existing.workoutCalo || 0,
+          note: log.note || existing.note || '',
+        });
+      }
+    }
+  });
+
+  return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
  * Push local data to Cloud Sync (Network API first, then Local Backup Cache)
  */
 /**
