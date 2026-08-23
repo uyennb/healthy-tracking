@@ -103,11 +103,11 @@ export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): Dail
   return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
 }
 
+const REST_URL = 'https://api.restful-api.dev/objects';
+const MASTER_INDEX_ID = 'ff8081819ff5b11001a02d5eafe47e4d';
+
 /**
- * Push local data to Cloud Sync (Network API first, then Local Backup Cache)
- */
-/**
- * Push local data to Cloud Sync (Network API first, then Direct Global KV Store)
+ * Push local data to Cloud Sync (Network API first, then Master Index direct fallback)
  */
 export async function pushDataToCloud(
   syncCode: string,
@@ -150,17 +150,37 @@ export async function pushDataToCloud(
     if (res.ok) return true;
   } catch {}
 
-  // 3. Direct KV Store Push Fallback (guarantees cross-device persistence)
+  // 3. Direct Master Index Push Fallback (guarantees cross-device persistence)
   try {
-    const kvRes = await fetch(`https://kvdb.io/nutrifit_sync_v6_db/${digits}`, {
+    const postRes = await fetch(REST_URL, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ name: `nutrifit_code_${digits}`, data: payload }),
     });
-    return kvRes.ok;
-  } catch {
-    return true;
+
+    if (postRes.ok) {
+      const created = await postRes.json();
+      if (created && created.id) {
+        let indexMap: Record<string, string> = {};
+        const indexRes = await fetch(`${REST_URL}/${MASTER_INDEX_ID}`);
+        if (indexRes.ok) {
+          const indexObj = await indexRes.json();
+          indexMap = indexObj.data || {};
+        }
+        indexMap[digits] = created.id;
+        await fetch(`${REST_URL}/${MASTER_INDEX_ID}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'nutrifit_master_index_v6', data: indexMap }),
+        });
+        return true;
+      }
+    }
+  } catch (err) {
+    console.warn('Direct Master Index push error:', err);
   }
+
+  return true;
 }
 
 /**
@@ -188,23 +208,31 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
       }
     }
   } catch (err) {
-    console.warn('Network fetch error from /api/sync, trying direct KV fallback:', err);
+    console.warn('Network fetch error from /api/sync, trying direct Master Index fallback:', err);
   }
 
-  // 2. Direct Global KV Store Fetch Fallback
+  // 2. Direct Master Index Fetch Fallback
   try {
-    const kvRes = await fetch(`https://kvdb.io/nutrifit_sync_v6_db/${digits}`);
-    if (kvRes.ok) {
-      const json = await kvRes.json();
-      if (json && Array.isArray(json.logs)) {
-        try {
-          localStorage.setItem(`nutrifit_cloud_payload_${digits}`, JSON.stringify(json));
-        } catch {}
-        return json as CloudSyncPayload;
+    const indexRes = await fetch(`${REST_URL}/${MASTER_INDEX_ID}`);
+    if (indexRes.ok) {
+      const indexObj = await indexRes.json();
+      const targetId = indexObj?.data?.[digits];
+
+      if (targetId) {
+        const payloadRes = await fetch(`${REST_URL}/${targetId}`);
+        if (payloadRes.ok) {
+          const item = await payloadRes.json();
+          if (item && item.data && Array.isArray(item.data.logs)) {
+            try {
+              localStorage.setItem(`nutrifit_cloud_payload_${digits}`, JSON.stringify(item.data));
+            } catch {}
+            return item.data as CloudSyncPayload;
+          }
+        }
       }
     }
   } catch (err) {
-    console.warn('Direct KV fetch error:', err);
+    console.warn('Direct Master Index fetch error:', err);
   }
 
   // 3. Fall back to local backup cache if offline

@@ -1,5 +1,6 @@
 // Vercel Serverless Function for NutriFit 6-Digit Realtime Cloud Sync
-const KV_BUCKET = 'https://kvdb.io/nutrifit_sync_v6_db';
+const REST_URL = 'https://api.restful-api.dev/objects';
+const MASTER_INDEX_ID = 'ff8081819ff5b11001a02d5eafe47e4d';
 
 export default async function handler(req, res) {
   // CORS Headers
@@ -27,8 +28,6 @@ export default async function handler(req, res) {
       return res.status(400).json({ error: 'Mã kết nối phải có đúng 6 chữ số' });
     }
 
-    const kvUrl = `${KV_BUCKET}/${cleanCode}`;
-
     if (req.method === 'POST' || req.method === 'PUT') {
       const { logs, profile } = req.body || {};
       const payload = {
@@ -38,13 +37,34 @@ export default async function handler(req, res) {
       };
 
       try {
-        await fetch(kvUrl, {
+        // 1. Create payload object
+        const postRes = await fetch(REST_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: JSON.stringify({ name: `nutrifit_code_${cleanCode}`, data: payload }),
         });
+
+        if (postRes.ok) {
+          const created = await postRes.json();
+          if (created && created.id) {
+            // 2. Fetch master index
+            let indexMap = {};
+            const indexRes = await fetch(`${REST_URL}/${MASTER_INDEX_ID}`);
+            if (indexRes.ok) {
+              const indexObj = await indexRes.json();
+              indexMap = indexObj.data || {};
+            }
+            // 3. Update master index map with cleanCode -> created.id
+            indexMap[cleanCode] = created.id;
+            await fetch(`${REST_URL}/${MASTER_INDEX_ID}`, {
+              method: 'PUT',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ name: 'nutrifit_master_index_v6', data: indexMap }),
+            });
+          }
+        }
       } catch (e) {
-        console.warn('KV store POST error:', e);
+        console.warn('REST update error:', e);
       }
 
       return res.status(200).json({ success: true, code: cleanCode, payload });
@@ -52,15 +72,24 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       try {
-        const fetchRes = await fetch(kvUrl);
-        if (fetchRes.ok) {
-          const data = await fetchRes.json();
-          if (data && Array.isArray(data.logs)) {
-            return res.status(200).json({ success: true, data });
+        // 1. Fetch master index
+        const indexRes = await fetch(`${REST_URL}/${MASTER_INDEX_ID}`);
+        if (indexRes.ok) {
+          const indexObj = await indexRes.json();
+          const targetId = indexObj?.data?.[cleanCode];
+
+          if (targetId) {
+            const payloadRes = await fetch(`${REST_URL}/${targetId}`);
+            if (payloadRes.ok) {
+              const item = await payloadRes.json();
+              if (item && item.data && Array.isArray(item.data.logs)) {
+                return res.status(200).json({ success: true, data: item.data });
+              }
+            }
           }
         }
       } catch (e) {
-        console.warn('KV store GET error:', e);
+        console.warn('REST fetch error:', e);
       }
 
       return res.status(404).json({ error: 'Chưa có dữ liệu cho mã 6 số này' });
