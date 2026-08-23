@@ -10,6 +10,8 @@ interface ProfileViewProps {
   language: Language;
   onChangeLanguage: (lang: Language) => void;
   onOpenDataManagement: () => void;
+  onOpenCloudSync?: () => void;
+  syncCode?: string;
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({
@@ -17,6 +19,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onSaveProfile,
   language,
   onOpenDataManagement,
+  onOpenCloudSync,
+  syncCode,
 }) => {
   const t = getTranslation(language);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -266,6 +270,33 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </button>
         </div>
       </form>
+
+      {/* Cloud Sync Section inside Profile View */}
+      {onOpenCloudSync && (
+        <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-3xl p-4 shadow-sm border border-emerald-200/80 flex items-center justify-between">
+          <div className="flex items-center gap-2.5">
+            <div className="w-9 h-9 rounded-xl bg-emerald-500 text-white flex items-center justify-center shadow-md shadow-emerald-500/20">
+              <Sparkles className="w-4 h-4" />
+            </div>
+            <div>
+              <h4 className="font-extrabold text-emerald-900 text-xs">
+                {language === 'vi' ? 'Đồng bộ Đám mây Cloud' : 'Cloud Sync'}
+              </h4>
+              <p className="text-[10px] text-emerald-700 font-semibold">
+                {syncCode ? `Mã: ${syncCode}` : (language === 'vi' ? 'Mã 6 số - Tự động đồng bộ 24/7' : '6-digit code - Auto 24/7 sync')}
+              </p>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onOpenCloudSync}
+            className="flex items-center gap-1.5 text-xs font-black px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition active:scale-95"
+          >
+            <span>{syncCode ? (language === 'vi' ? 'Mở Sync' : 'Manage Sync') : (language === 'vi' ? 'Bật Sync' : 'Enable Sync')}</span>
+          </button>
+        </div>
+      )}
 
       {/* Data Management Section at bottom of page */}
       <div className="bg-white rounded-3xl p-4 shadow-sm border border-slate-100 flex items-center justify-between">

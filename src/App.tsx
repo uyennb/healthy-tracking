@@ -293,6 +293,8 @@ export function App() {
             language={language}
             onChangeLanguage={handleChangeLanguage}
             onOpenDataManagement={() => setIsDataModalOpen(true)}
+            onOpenCloudSync={() => setIsSyncModalOpen(true)}
+            syncCode={syncCode}
           />
         ) : (
           <>

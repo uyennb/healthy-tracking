@@ -39,26 +39,26 @@ export const Header: React.FC<HeaderProps> = ({
 
         {/* Quick Actions - Cloud Sync, Language Toggle & Profile Avatar */}
         <div className="flex items-center gap-2">
-          {/* Cloud Realtime Sync Status Button */}
+          {/* Cloud Realtime Sync Status Button - ALWAYS VISIBLE */}
           {onOpenCloudSync && (
             <button
               onClick={onOpenCloudSync}
-              className={`flex items-center gap-1.5 text-xs font-extrabold px-2.5 py-1.5 rounded-xl transition active:scale-95 ${
+              className={`flex items-center gap-1.5 text-xs font-extrabold px-3 py-1.5 rounded-xl transition active:scale-95 shadow-sm ${
                 syncCode
-                  ? 'bg-emerald-50 text-emerald-700 border border-emerald-200/80 shadow-sm hover:bg-emerald-100'
-                  : 'bg-slate-100 hover:bg-slate-200 text-slate-600'
+                  ? 'bg-emerald-500 text-white shadow-emerald-500/25 hover:bg-emerald-600'
+                  : 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white shadow-teal-500/25 hover:opacity-95'
               }`}
               title="Đồng bộ Đám mây / Cloud Sync"
             >
               {syncCode ? (
                 <>
-                  <Zap className="w-3.5 h-3.5 text-emerald-500 fill-emerald-500 animate-pulse" />
-                  <span className="font-mono text-[11px]">{formatDisplayCode(syncCode)}</span>
+                  <Zap className="w-3.5 h-3.5 text-yellow-300 fill-yellow-300 animate-pulse flex-shrink-0" />
+                  <span className="font-mono text-xs font-black tracking-wider">{formatDisplayCode(syncCode)}</span>
                 </>
               ) : (
                 <>
-                  <Cloud className="w-3.5 h-3.5 text-slate-500" />
-                  <span className="hidden xs:inline">Sync</span>
+                  <Cloud className="w-3.5 h-3.5 text-white flex-shrink-0" />
+                  <span className="text-xs font-black whitespace-nowrap">Sync Cloud</span>
                 </>
               )}
             </button>
