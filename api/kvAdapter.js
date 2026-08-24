@@ -46,8 +46,8 @@ const testMemoryStorage = new Map();
 
 export class KvAdapter {
   constructor(options = {}) {
-    this.url = options.url || process.env.KV_REST_API_URL;
-    this.token = options.token || process.env.KV_REST_API_TOKEN;
+    this.url = options.url || process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+    this.token = options.token || process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
     this.isTestMode = options.isTestMode || process.env.KV_TEST_MODE === 'true';
 
     if (this.url && this.token && !this.isTestMode) {
@@ -65,6 +65,18 @@ export class KvAdapter {
   isConfigured() {
     if (this.isTestMode) return true;
     return Boolean(this.url && this.token && this.redis);
+  }
+
+  async ping() {
+    if (this.isTestMode) return { ok: true, mode: 'test_memory' };
+    if (!this.isConfigured()) return { ok: false, error: 'KV_NOT_CONFIGURED' };
+
+    try {
+      const pong = await this.redis.ping();
+      return { ok: pong === 'PONG' || pong === true, response: pong };
+    } catch (err) {
+      return { ok: false, error: err?.message || 'PING_FAILED' };
+    }
   }
 
   async getState(key) {

@@ -1,5 +1,5 @@
 // Comprehensive Multi-Device Sync Verification Suite for NutriFit
-// Integration tests invoking actual production handlers (api/sync.js, api/kvAdapter.js) and algorithms (src/utils/syncEngine.ts)
+// Integration tests invoking actual production handlers (api/sync.js, api/kvAdapter.js, api/health.js) and algorithms (src/utils/syncEngine.ts)
 
 import assert from 'assert';
 import {
@@ -13,9 +13,10 @@ import {
 } from '../src/utils/syncEngine';
 import { createSyncHandler } from '../api/sync.js';
 import { KvAdapter } from '../api/kvAdapter.js';
+import healthHandler from '../api/health.js';
 
 // Helper to simulate express/vercel req & res
-function createMockHttp() {
+export function createMockHttp() {
   const req: any = {
     headers: {},
     query: {},
@@ -498,7 +499,18 @@ async function runAllTests() {
     console.log('✅ Scenario Q PASSED!\n');
   }
 
-  console.log('🎉 ALL 17 TEST SCENARIOS (A THROUGH Q) PASSED WITH 100% SUCCESS!');
+  // Health Check Endpoint Test: api/health.js
+  {
+    console.log('Testing Health Check Endpoint: api/health.js');
+    const healthHttp = createMockHttp();
+    await healthHandler(healthHttp.req, healthHttp.res);
+    const healthData = healthHttp.res.getData();
+    assert.ok(typeof healthData.databaseConfigured === 'boolean');
+    assert.ok(typeof healthData.databaseReachable === 'boolean');
+    console.log('✅ Health Check Endpoint PASSED!\n');
+  }
+
+  console.log('🎉 ALL 17 TEST SCENARIOS (A THROUGH Q) + HEALTH CHECK PASSED WITH 100% SUCCESS!');
 }
 
 runAllTests().catch(err => {
