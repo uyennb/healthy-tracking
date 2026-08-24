@@ -106,9 +106,12 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   if (!isOpen) return null;
 
+  const [pulled, setPulled] = useState(false);
+
   const handleManualPush = async () => {
     if (!syncCode) return;
     setIsConnecting(true);
+    setErrorMsg('');
     try {
       await pushDataToCloud(syncCode, logs, profile);
       setIsConnecting(false);
@@ -116,6 +119,26 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
       setTimeout(() => setPushed(false), 2500);
     } catch {
       setIsConnecting(false);
+    }
+  };
+
+  const handleManualPull = async () => {
+    if (!syncCode) return;
+    setIsConnecting(true);
+    setErrorMsg('');
+    try {
+      const remoteData = await fetchCloudData(syncCode);
+      setIsConnecting(false);
+      if (remoteData && remoteData.logs && remoteData.logs.length > 0) {
+        onConnectSync(syncCode, { logs: remoteData.logs, profile: remoteData.profile || profile });
+        setPulled(true);
+        setTimeout(() => setPulled(false), 2500);
+      } else {
+        setErrorMsg(isVI ? 'Chưa tìm thấy dữ liệu mới trên Cloud cho mã 6 số này.' : 'No Cloud data found for this 6-digit code.');
+      }
+    } catch (err: any) {
+      setIsConnecting(false);
+      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server error.'));
     }
   };
 
@@ -326,25 +349,46 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                     className="w-full bg-slate-50 border border-teal-200 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-teal-900 focus:ring-1 focus:ring-teal-500 select-all font-semibold cursor-pointer"
                   />
 
-                  {/* Manual Push Button */}
-                  <button
-                    type="button"
-                    disabled={isConnecting}
-                    onClick={handleManualPush}
-                    className="w-full mt-1.5 flex items-center justify-center gap-1.5 text-xs font-bold px-3 py-2 rounded-lg bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-200 transition active:scale-95 disabled:opacity-50"
-                  >
-                    {pushed ? (
-                      <>
-                        <Check className="w-3.5 h-3.5 text-emerald-600" />
-                        <span>{isVI ? '✅ Đã đẩy dữ liệu máy này lên Cloud!' : '✅ Uploaded local data to Cloud!'}</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className={`w-3.5 h-3.5 text-teal-600 ${isConnecting ? 'animate-spin' : ''}`} />
-                        <span>{isVI ? '📤 Đẩy dữ liệu máy này lên Cloud ngay' : 'Push local data to Cloud now'}</span>
-                      </>
-                    )}
-                  </button>
+                  {/* Manual Push and Pull Cloud Buttons */}
+                  <div className="grid grid-cols-2 gap-2 mt-2">
+                    <button
+                      type="button"
+                      disabled={isConnecting}
+                      onClick={handleManualPush}
+                      className="flex items-center justify-center gap-1 text-xs font-extrabold px-3 py-2 rounded-xl bg-teal-600 hover:bg-teal-700 text-white shadow-sm transition active:scale-95 disabled:opacity-50"
+                    >
+                      {pushed ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>{isVI ? 'Đã đẩy lên!' : 'Uploaded!'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? 'animate-spin' : ''}`} />
+                          <span>{isVI ? '📤 Đẩy lên Cloud' : 'Push to Cloud'}</span>
+                        </>
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={isConnecting}
+                      onClick={handleManualPull}
+                      className="flex items-center justify-center gap-1 text-xs font-extrabold px-3 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition active:scale-95 disabled:opacity-50"
+                    >
+                      {pulled ? (
+                        <>
+                          <Check className="w-3.5 h-3.5" />
+                          <span>{isVI ? 'Đã tải từ Cloud!' : 'Downloaded!'}</span>
+                        </>
+                      ) : (
+                        <>
+                          <Cloud className="w-3.5 h-3.5" />
+                          <span>{isVI ? '📥 Tải từ Cloud' : 'Pull from Cloud'}</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
                 </div>
               </div>
 
