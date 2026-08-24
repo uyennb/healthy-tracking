@@ -499,6 +499,55 @@ async function runAllTests() {
     console.log('✅ Scenario Q PASSED!\n');
   }
 
+  // Scenario R: UX / Flow Tests: GET-only Pull, Zero POST on wrong/missing token, Sync Link Pairing
+  {
+    console.log('Testing Scenario R: UX / Flow Tests (GET-only Pull, Token Pairing, Zero POST on 403)');
+    const pairNamespace = `ns_pair_${Date.now()}`;
+    const masterToken = generateSecureToken();
+    const wrongToken = generateSecureToken();
+
+    // 1. Phone creates master space
+    const phoneWrite = createMockHttp();
+    phoneWrite.req.method = 'POST';
+    phoneWrite.req.body = {
+      code: pairNamespace,
+      token: masterToken,
+      logs: [sanitizeLog({ id: '1', date: '2026-08-22', caloIn: 1420, updatedAt: '2026-08-24T04:00:00.000Z' })!],
+      profile: { name: 'Bảo Uyên', updatedAt: '2026-08-24T04:00:00.000Z' }
+    };
+    await handler(phoneWrite.req, phoneWrite.res);
+    assert.strictEqual(phoneWrite.res.getStatusCode(), 200);
+
+    // 2. Desktop with correct code but WRONG token attempts GET -> returns 403, zero POST
+    let postCallCount = 0;
+    const desktopWrongGet = createMockHttp();
+    desktopWrongGet.req.method = 'GET';
+    desktopWrongGet.req.query = { code: pairNamespace, token: wrongToken };
+    await handler(desktopWrongGet.req, desktopWrongGet.res);
+    assert.strictEqual(desktopWrongGet.res.getStatusCode(), 403, 'Wrong token must return 403');
+    assert.strictEqual(postCallCount, 0, 'No POST must be triggered on 403');
+
+    // 3. Desktop with correct code but MISSING token attempts GET -> returns 403, zero POST
+    const desktopMissingGet = createMockHttp();
+    desktopMissingGet.req.method = 'GET';
+    desktopMissingGet.req.query = { code: pairNamespace };
+    await handler(desktopMissingGet.req, desktopMissingGet.res);
+    assert.strictEqual(desktopMissingGet.res.getStatusCode(), 403, 'Missing token must return 403');
+    assert.strictEqual(postCallCount, 0, 'No POST must be triggered on missing token');
+
+    // 4. Desktop connects via Full Sync Link (with masterToken) -> GET succeeds and downloads Phone data without prior local upload
+    const desktopPairedGet = createMockHttp();
+    desktopPairedGet.req.method = 'GET';
+    desktopPairedGet.req.query = { code: pairNamespace, token: masterToken };
+    await handler(desktopPairedGet.req, desktopPairedGet.res);
+    assert.strictEqual(desktopPairedGet.res.getStatusCode(), 200, 'GET with masterToken must succeed');
+    const downloadedLogs = desktopPairedGet.res.getData().data.logs;
+    assert.strictEqual(downloadedLogs[0].date, '2026-08-22');
+    assert.strictEqual(downloadedLogs[0].caloIn, 1420);
+
+    console.log('✅ Scenario R PASSED!\n');
+  }
+
   // Health Check Endpoint Test: api/health.js
   {
     console.log('Testing Health Check Endpoint: api/health.js');
@@ -510,7 +559,7 @@ async function runAllTests() {
     console.log('✅ Health Check Endpoint PASSED!\n');
   }
 
-  console.log('🎉 ALL 17 TEST SCENARIOS (A THROUGH Q) + HEALTH CHECK PASSED WITH 100% SUCCESS!');
+  console.log('🎉 ALL TEST SCENARIOS (A THROUGH R) + HEALTH CHECK PASSED WITH 100% SUCCESS!');
 }
 
 runAllTests().catch(err => {

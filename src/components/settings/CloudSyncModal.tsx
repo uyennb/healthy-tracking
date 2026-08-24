@@ -9,7 +9,8 @@ import {
   formatDisplayCode,
   normalizeSyncCode,
   pushDataToCloud,
-  fetchCloudData,
+  pullFromCloud,
+  fetchCloudDataDetailed,
   reconcileWithCloud,
   encodeDataToBase64,
   decodeDataFromBase64,
@@ -97,7 +98,12 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const [copiedLink, setCopiedLink] = useState(false);
   const [pushed, setPushed] = useState(false);
   const [pulled, setPulled] = useState(false);
+  
+  // Independent loading states
+  const [isPushing, setIsPushing] = useState(false);
+  const [isPulling, setIsPulling] = useState(false);
   const [isConnecting, setIsConnecting] = useState(false);
+  
   const [errorMsg, setErrorMsg] = useState('');
   const [showQR, setShowQR] = useState(false);
 
@@ -122,42 +128,55 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   const handleManualPush = async () => {
     if (!syncCode) return;
-    setIsConnecting(true);
+    setIsPushing(true);
     setErrorMsg('');
     try {
       const allLogs = getAllStoredLogsWithTombstones();
       const res = await pushDataToCloud(syncCode, allLogs, profile);
-      setIsConnecting(false);
+      setIsPushing(false);
       if (res.success && res.data) {
         onConnectSync(syncCode, { logs: res.data.logs, profile: res.data.profile });
         setPushed(true);
         setTimeout(() => setPushed(false), 2500);
       } else {
-        setErrorMsg(res.error || (isVI ? 'Lỗi kết nối máy chủ Cloud. Vui lòng kiểm tra lại mạng.' : 'Cloud connection failed. Please check network.'));
+        setErrorMsg(
+          res.isAuthError
+            ? (isVI
+                ? 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).'
+                : 'This device is not paired with the correct token. Please use the Sync Link with Token from your primary device.')
+            : (res.error || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server error.'))
+        );
       }
     } catch (err: any) {
-      setIsConnecting(false);
+      setIsPushing(false);
       setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server error.'));
     }
   };
 
+  // GET-ONLY Pull Handler (Zero Push)
   const handleManualPull = async () => {
     if (!syncCode) return;
-    setIsConnecting(true);
+    setIsPulling(true);
     setErrorMsg('');
     try {
       const allLogs = getAllStoredLogsWithTombstones();
-      const res = await reconcileWithCloud(syncCode, allLogs, profile);
-      setIsConnecting(false);
-      if (res.status === 'synced' || res.logs.length > 0) {
-        onConnectSync(syncCode, { logs: res.logs, profile: res.profile });
+      const res = await pullFromCloud(syncCode, allLogs, profile);
+      setIsPulling(false);
+      if (res.success && res.logs) {
+        onConnectSync(syncCode, { logs: res.logs, profile: res.profile || profile });
         setPulled(true);
         setTimeout(() => setPulled(false), 2500);
       } else {
-        setErrorMsg(res.error || (isVI ? 'Chưa tìm thấy dữ liệu mới trên Cloud cho mã kết nối này.' : 'No Cloud data found for this sync code.'));
+        setErrorMsg(
+          res.isAuthError
+            ? (isVI
+                ? 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).'
+                : 'This device is not paired with the correct token. Please use the Sync Link with Token from your primary device.')
+            : (res.error || (isVI ? 'Chưa tìm thấy dữ liệu trên Cloud cho mã kết nối này.' : 'No Cloud data found for this sync code.'))
+        );
       }
     } catch (err: any) {
-      setIsConnecting(false);
+      setIsPulling(false);
       setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server error.'));
     }
   };
@@ -244,13 +263,21 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
     try {
       const allLogs = getAllStoredLogsWithTombstones();
-      const res = await reconcileWithCloud(cleanDigits, allLogs, profile, extractedToken || undefined);
+      // Flow: GET canonical Cloud state first without prior local push!
+      const res = await pullFromCloud(cleanDigits, allLogs, profile, extractedToken || undefined);
       setIsConnecting(false);
-      if (res.status === 'synced' || res.logs.length > 0) {
-        onConnectSync(formattedCode, { logs: res.logs, profile: res.profile });
+
+      if (res.success && res.logs) {
+        onConnectSync(formattedCode, { logs: res.logs, profile: res.profile || profile });
         setInputCode('');
       } else {
-        setErrorMsg(res.error || (isVI ? 'Không thể kết nối với mã này.' : 'Failed to connect with this code.'));
+        setErrorMsg(
+          res.isAuthError
+            ? (isVI
+                ? 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).'
+                : 'This device is not paired with the correct token. Please use the Sync Link with Token from your primary device.')
+            : (res.error || (isVI ? 'Không thể kết nối với mã này.' : 'Failed to connect with this code.'))
+        );
       }
     } catch (err: any) {
       setIsConnecting(false);
@@ -308,6 +335,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
         );
     }
   };
+
+  const isAnyActionBusy = isPushing || isPulling || isConnecting;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-fadeIn">
@@ -390,9 +419,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
                 {/* Main Action Buttons */}
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
+                  {/* Push Button: ONLY animates during isPushing */}
                   <button
                     type="button"
-                    disabled={isConnecting}
+                    disabled={isAnyActionBusy}
                     onClick={handleManualPush}
                     className="flex items-center justify-center gap-1.5 text-xs font-extrabold py-2.5 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white shadow-sm transition active:scale-95 disabled:opacity-50"
                   >
@@ -403,15 +433,20 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                       </>
                     ) : (
                       <>
-                        <Upload className={`w-4 h-4 ${isConnecting ? 'animate-bounce' : ''}`} />
+                        {isPushing ? (
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Upload className="w-4 h-4" />
+                        )}
                         <span>{isVI ? '📤 Đẩy lên Cloud' : 'Push to Cloud'}</span>
                       </>
                     )}
                   </button>
 
+                  {/* Pull Button: ONLY animates during isPulling */}
                   <button
                     type="button"
-                    disabled={isConnecting}
+                    disabled={isAnyActionBusy}
                     onClick={handleManualPull}
                     className="flex items-center justify-center gap-1.5 text-xs font-extrabold py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition active:scale-95 disabled:opacity-50"
                   >
@@ -422,7 +457,11 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                       </>
                     ) : (
                       <>
-                        <Download className="w-4 h-4" />
+                        {isPulling ? (
+                          <RefreshCw className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Download className="w-4 h-4" />
+                        )}
                         <span>{isVI ? '📥 Tải từ Cloud' : 'Pull from Cloud'}</span>
                       </>
                     )}
@@ -493,8 +532,9 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
         {/* Error alert */}
         {errorMsg && (
-          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold">
-            {errorMsg}
+          <div className="mb-4 p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-xl text-xs font-semibold flex items-start gap-2">
+            <AlertCircle className="w-4 h-4 text-amber-600 flex-shrink-0 mt-0.5" />
+            <span>{errorMsg}</span>
           </div>
         )}
 
@@ -502,7 +542,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
         <div className="space-y-4">
           <button
             type="button"
-            disabled={isConnecting}
+            disabled={isAnyActionBusy}
             onClick={handleGenerateNewCode}
             className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-extrabold py-3 px-4 rounded-2xl shadow-md shadow-emerald-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2 text-xs disabled:opacity-60"
           >
@@ -529,19 +569,19 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
           <form onSubmit={handleConnectExistingCode} className="space-y-2">
             <label className="block text-xs font-bold text-slate-700">
-              {isVI ? 'Nhập mã 6 số của máy khác:' : 'Enter 6-digit code from other device:'}
+              {isVI ? 'Dán link đồng bộ hoặc nhập mã 6 số:' : 'Paste sync link or enter 6-digit code:'}
             </label>
             <div className="flex gap-2">
               <input
                 type="text"
                 value={inputCode}
                 onChange={e => setInputCode(e.target.value)}
-                placeholder={isVI ? 'VD: 686-888 hoặc dán link' : 'e.g. 686-888 or paste link'}
+                placeholder={isVI ? 'Dán link có token hoặc VD: 686-888' : 'Paste link with token or e.g. 686-888'}
                 className="flex-1 px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none font-mono"
               />
               <button
                 type="submit"
-                disabled={isConnecting || !inputCode.trim()}
+                disabled={isAnyActionBusy || !inputCode.trim()}
                 className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition disabled:opacity-50 flex items-center gap-1"
               >
                 {isConnecting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}

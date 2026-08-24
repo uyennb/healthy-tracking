@@ -27,6 +27,7 @@ export interface CloudSyncPayload {
 
 export interface SyncPushResult {
   success: boolean;
+  statusCode?: number;
   data?: {
     logs: DailyLog[];
     profile: UserProfile;
@@ -34,6 +35,15 @@ export interface SyncPushResult {
     version?: number;
   };
   error?: string;
+  isAuthError?: boolean;
+}
+
+export interface FetchCloudResult {
+  success: boolean;
+  statusCode?: number;
+  data?: CloudSyncPayload;
+  error?: string;
+  isAuthError?: boolean;
 }
 
 export function normalizeSyncCode(code: string): string {
@@ -111,6 +121,7 @@ export async function pushDataToCloud(
 
         return {
           success: true,
+          statusCode: res.status,
           data: {
             logs: canonicalLogs,
             profile: canonicalProfile,
@@ -121,13 +132,26 @@ export async function pushDataToCloud(
       }
     }
 
-    let errorDetail = 'Lỗi máy chủ khi đồng bộ';
+    const isAuth = res.status === 401 || res.status === 403;
+    let errorDetail = isAuth
+      ? 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).'
+      : 'Lỗi máy chủ khi đồng bộ';
+
     try {
       const errJson = await res.json();
-      if (errJson && errJson.error) errorDetail = errJson.error;
+      if (errJson && errJson.error) {
+        errorDetail = isAuth
+          ? 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).'
+          : errJson.error;
+      }
     } catch {}
 
-    return { success: false, error: errorDetail };
+    return {
+      success: false,
+      statusCode: res.status,
+      isAuthError: isAuth,
+      error: errorDetail,
+    };
   } catch (err: any) {
     console.warn('Sync push network error:', err);
     return { success: false, error: err?.message || 'Lỗi mạng khi kết nối máy chủ' };
@@ -135,13 +159,14 @@ export async function pushDataToCloud(
 }
 
 /**
- * Fetch remote state from canonical persistent backend
+ * Fetch remote state from canonical persistent backend with detailed HTTP status inspection
  */
-export async function fetchCloudData(syncCode: string, overrideToken?: string): Promise<CloudSyncPayload | null> {
+export async function fetchCloudDataDetailed(syncCode: string, overrideToken?: string): Promise<FetchCloudResult> {
   const digits = normalizeSyncCode(syncCode);
-  if (!digits) return null;
+  if (!digits) return { success: false, error: 'Mã không hợp lệ' };
 
-  const syncToken = overrideToken || getStoredSyncToken();
+  // Only use existing stored token or explicit overrideToken (never generate a random token for fetching existing space)
+  const syncToken = overrideToken !== undefined ? overrideToken : (localStorage.getItem('nutrifit_sync_token_v1') || '');
 
   try {
     const controller = new AbortController();
@@ -158,23 +183,117 @@ export async function fetchCloudData(syncCode: string, overrideToken?: string): 
       if (json && json.success && json.data && Array.isArray(json.data.logs)) {
         const cleanLogs = json.data.logs.map((l: any) => sanitizeLog(l)).filter((l: DailyLog | null): l is DailyLog => l !== null);
         return {
-          logs: cleanLogs,
-          profile: json.data.profile || {},
-          updatedAt: json.data.updatedAt || new Date().toISOString(),
-          version: json.data.version,
+          success: true,
+          statusCode: res.status,
+          data: {
+            logs: cleanLogs,
+            profile: json.data.profile || {},
+            updatedAt: json.data.updatedAt || new Date().toISOString(),
+            version: json.data.version,
+          },
         };
       }
     }
-  } catch (err) {
+
+    const isAuth = res.status === 401 || res.status === 403;
+    let errorDetail = isAuth
+      ? 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).'
+      : 'Không thể tải dữ liệu từ Cloud';
+
+    try {
+      const errJson = await res.json();
+      if (errJson && errJson.error) {
+        errorDetail = isAuth
+          ? 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).'
+          : errJson.error;
+      }
+    } catch {}
+
+    return {
+      success: false,
+      statusCode: res.status,
+      isAuthError: isAuth,
+      error: errorDetail,
+    };
+  } catch (err: any) {
     console.warn('/api/sync fetch error:', err);
+    return {
+      success: false,
+      error: err?.message || 'Lỗi mạng khi tải dữ liệu Cloud',
+    };
+  }
+}
+
+export async function fetchCloudData(syncCode: string, overrideToken?: string): Promise<CloudSyncPayload | null> {
+  const res = await fetchCloudDataDetailed(syncCode, overrideToken);
+  return res.success && res.data ? res.data : null;
+}
+
+/**
+ * Dedicated GET-ONLY Pull Function:
+ * Strictly downloads canonical Cloud state and merges into LocalStorage.
+ * NEVER performs any Cloud Push or upload!
+ */
+export async function pullFromCloud(
+  syncCode: string,
+  localLogs: DailyLog[],
+  localProfile: UserProfile,
+  overrideToken?: string
+): Promise<{
+  success: boolean;
+  logs?: DailyLog[];
+  profile?: UserProfile;
+  lastSyncTime?: string;
+  error?: string;
+  isAuthError?: boolean;
+}> {
+  const digits = normalizeSyncCode(syncCode);
+  if (!digits) return { success: false, error: 'Mã kết nối không hợp lệ' };
+
+  const fetchRes = await fetchCloudDataDetailed(digits, overrideToken);
+
+  if (fetchRes.isAuthError || fetchRes.statusCode === 401 || fetchRes.statusCode === 403) {
+    return {
+      success: false,
+      isAuthError: true,
+      error: 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).',
+    };
   }
 
-  return null;
+  if (fetchRes.statusCode === 404 || !fetchRes.data) {
+    return {
+      success: false,
+      error: 'Chưa có dữ liệu nào trên Cloud cho mã kết nối này.',
+    };
+  }
+
+  if (!fetchRes.success || !fetchRes.data) {
+    return {
+      success: false,
+      error: fetchRes.error || 'Lỗi kết nối máy chủ Cloud.',
+    };
+  }
+
+  // GET-Only merge: Apply remote logs into local storage safely without any Push
+  const mergedLogsAll = mergeLogsConflictSafe(localLogs, fetchRes.data.logs);
+  const mergedProfile = mergeProfilesConflictSafe(localProfile, fetchRes.data.profile);
+
+  saveLogsWithTombstones(mergedLogsAll);
+  saveProfile(mergedProfile);
+  const syncTime = fetchRes.data.updatedAt || new Date().toISOString();
+  saveLastSyncTime(syncTime);
+
+  return {
+    success: true,
+    logs: mergedLogsAll.filter(l => !l.deletedAt),
+    profile: mergedProfile,
+    lastSyncTime: syncTime,
+  };
 }
 
 /**
  * Centralized Canonical Reconciliation Function:
- * Used identically for startup, background polling, visibility reconnect, and manual sync.
+ * Used for background sync and startup.
  * Reconciles local and remote state, pushes local newer edits, and only sets 'synced' on confirmed durable write!
  */
 export async function reconcileWithCloud(
@@ -182,7 +301,7 @@ export async function reconcileWithCloud(
   localLogs: DailyLog[],
   localProfile: UserProfile,
   overrideToken?: string
-): Promise<{ logs: DailyLog[]; profile: UserProfile; status: SyncStatus; error?: string }> {
+): Promise<{ logs: DailyLog[]; profile: UserProfile; status: SyncStatus; error?: string; isAuthError?: boolean }> {
   const digits = normalizeSyncCode(syncCode);
   if (!digits) {
     return {
@@ -193,9 +312,19 @@ export async function reconcileWithCloud(
   }
 
   try {
-    const remote = await fetchCloudData(digits, overrideToken);
+    const fetchRes = await fetchCloudDataDetailed(digits, overrideToken);
 
-    if (!remote) {
+    if (fetchRes.isAuthError || fetchRes.statusCode === 401 || fetchRes.statusCode === 403) {
+      return {
+        logs: localLogs.filter(l => !l.deletedAt),
+        profile: localProfile,
+        status: 'error',
+        isAuthError: true,
+        error: 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).',
+      };
+    }
+
+    if (fetchRes.statusCode === 404 || !fetchRes.data) {
       // Remote does not exist yet (brand new sync space) -> Push local initial state
       const pushRes = await pushDataToCloud(digits, localLogs, localProfile, overrideToken);
       if (pushRes.success && pushRes.data) {
@@ -209,9 +338,12 @@ export async function reconcileWithCloud(
         logs: localLogs.filter(l => !l.deletedAt),
         profile: localProfile,
         status: 'pending',
+        isAuthError: pushRes.isAuthError,
         error: pushRes.error,
       };
     }
+
+    const remote = fetchRes.data;
 
     // Conflict-Safe Merge
     const mergedLogsAll = mergeLogsConflictSafe(localLogs, remote.logs);
@@ -239,11 +371,11 @@ export async function reconcileWithCloud(
           status: 'synced',
         };
       } else {
-        // Push failed: keep local merged data safe, set status to pending/error
         return {
           logs: mergedLogsAll.filter(l => !l.deletedAt),
           profile: mergedProfile,
           status: 'pending',
+          isAuthError: pushRes.isAuthError,
           error: pushRes.error,
         };
       }
@@ -276,7 +408,7 @@ export async function syncOnStartup(
 }
 
 /**
- * Subscribe to realtime Cloud sync updates via event ping and visibility change with canonical reconciliation
+ * Subscribe to realtime Cloud sync updates via polling and visibility change with canonical reconciliation
  */
 export function subscribeToCloudSync(
   syncCode: string,
