@@ -15,20 +15,10 @@ import {
 /**
  * Robust Dual-Layer Copy function working 100% across Mobile Safari, Chrome iOS, Android & WebViews
  */
-export async function copyToClipboard(text: string): Promise<boolean> {
+export function copyToClipboard(text: string): boolean {
   if (!text) return false;
 
-  // Modern Clipboard API
-  if (navigator.clipboard && window.isSecureContext) {
-    try {
-      await navigator.clipboard.writeText(text);
-      return true;
-    } catch (err) {
-      console.warn('Clipboard API error, fallback to execCommand:', err);
-    }
-  }
-
-  // Robust Fallback for Mobile Safari / iOS / Zalo WebView
+  // 1. Synchronous execCommand first to guarantee iOS Safari / Mobile WebView compatibility
   try {
     const textArea = document.createElement('textarea');
     textArea.value = text;
@@ -43,6 +33,7 @@ export async function copyToClipboard(text: string): Promise<boolean> {
     textArea.style.boxShadow = 'none';
     textArea.style.background = 'transparent';
     document.body.appendChild(textArea);
+
     textArea.focus();
     textArea.select();
 
@@ -58,11 +49,22 @@ export async function copyToClipboard(text: string): Promise<boolean> {
 
     const successful = document.execCommand('copy');
     document.body.removeChild(textArea);
-    return successful;
+    if (successful) return true;
   } catch (err) {
-    console.error('Fallback copy failed', err);
-    return false;
+    console.warn('execCommand copy failed:', err);
   }
+
+  // 2. Modern Clipboard API fallback
+  if (navigator.clipboard) {
+    try {
+      navigator.clipboard.writeText(text);
+      return true;
+    } catch (err) {
+      console.warn('Clipboard API error:', err);
+    }
+  }
+
+  return false;
 }
 
 interface CloudSyncModalProps {
@@ -100,10 +102,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   const isVI = language === 'vi';
   const displayCode = formatDisplayCode(syncCode);
+  const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
 
   useEffect(() => {
     let isMounted = true;
-    const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
     if (displayCode && logs && logs.length > 0) {
       encodeDataToBase64Async(logs, profile).then(compressed => {
         if (isMounted) {
@@ -117,7 +119,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
       setQrUrl(displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl);
     }
     return () => { isMounted = false; };
-  }, [displayCode, logs, profile]);
+  }, [displayCode, logs, profile, currentUrl]);
 
   if (!isOpen) return null;
 
@@ -202,19 +204,39 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   };
 
   // Copy clean 6-digit formatted code to clipboard using dual-layer fallback
-  const handleCopyCode = async () => {
+  const handleCopyCode = () => {
     if (!displayCode) return;
-    const ok = await copyToClipboard(displayCode);
+    const ok = copyToClipboard(displayCode);
     if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2500);
     }
   };
 
-  // Copy instant 1-click sync link using dual-layer fallback
-  const handleCopyLink = async () => {
-    if (!qrUrl) return;
-    const ok = await copyToClipboard(qrUrl);
+  // Copy instant 1-click sync link using Web Share API or dual-layer fallback
+  const handleCopyLink = () => {
+    const targetUrl = qrUrl || (displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl);
+    if (!targetUrl) return;
+
+    if (navigator.share) {
+      navigator.share({
+        title: 'NutriFit Cloud Sync',
+        text: 'Link đồng bộ dữ liệu NutriFit 1-click:',
+        url: targetUrl,
+      }).then(() => {
+        setCopiedLink(true);
+        setTimeout(() => setCopiedLink(false), 2500);
+      }).catch(() => {
+        const ok = copyToClipboard(targetUrl);
+        if (ok) {
+          setCopiedLink(true);
+          setTimeout(() => setCopiedLink(false), 2500);
+        }
+      });
+      return;
+    }
+
+    const ok = copyToClipboard(targetUrl);
     if (ok) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
@@ -326,9 +348,21 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 <input
                   type="text"
                   readOnly
-                  value={qrUrl}
-                  onClick={e => (e.target as HTMLInputElement).select()}
-                  className="w-full bg-slate-50 border border-teal-200 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-teal-900 focus:ring-1 focus:ring-teal-500 select-all font-semibold"
+                  value={qrUrl || (displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl)}
+                  onClick={e => {
+                    const el = e.target as HTMLInputElement;
+                    el.select();
+                    el.setSelectionRange(0, 99999);
+                    const val = el.value;
+                    if (val) {
+                      const ok = copyToClipboard(val);
+                      if (ok) {
+                        setCopiedLink(true);
+                        setTimeout(() => setCopiedLink(false), 2500);
+                      }
+                    }
+                  }}
+                  className="w-full bg-slate-50 border border-teal-200 rounded-lg px-2.5 py-1.5 text-[10px] font-mono text-teal-900 focus:ring-1 focus:ring-teal-500 select-all font-semibold cursor-pointer"
                 />
 
                 {/* Manual Push Button */}
