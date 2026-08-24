@@ -123,9 +123,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     setErrorMsg('');
     try {
       const allLogs = getAllStoredLogsWithTombstones();
-      const success = await pushDataToCloud(syncCode, allLogs, profile);
+      const res = await pushDataToCloud(syncCode, allLogs, profile);
       setIsConnecting(false);
-      if (success) {
+      if (res.success && res.data) {
+        onConnectSync(syncCode, { logs: res.data.logs, profile: res.data.profile });
         setPushed(true);
         setTimeout(() => setPushed(false), 2500);
       } else {
@@ -163,9 +164,9 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     const newCode = generateNumericSyncCode();
     try {
       const allLogs = getAllStoredLogsWithTombstones();
-      const success = await pushDataToCloud(newCode, allLogs, profile);
+      const res = await pushDataToCloud(newCode, allLogs, profile);
       setIsConnecting(false);
-      if (success) {
+      if (res.success) {
         onConnectSync(newCode);
       } else {
         setErrorMsg(isVI ? 'Không thể tạo mã kết nối Cloud. Vui lòng kiểm tra mạng.' : 'Failed to generate sync code.');
@@ -224,8 +225,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     }
 
     const cleanDigits = normalizeSyncCode(codeStr);
-    if (!cleanDigits || cleanDigits.length !== 6) {
-      setErrorMsg(isVI ? 'Vui lòng nhập hoặc dán mã 6 số (ví dụ: 115-628) hoặc link đồng bộ.' : 'Please enter a valid 6-digit sync code (e.g. 115-628) or sync link.');
+    if (!cleanDigits || cleanDigits.length < 4) {
+      setErrorMsg(isVI ? 'Vui lòng nhập mã kết nối hợp lệ (ví dụ: 115-628) hoặc dán link.' : 'Please enter a valid sync code (e.g. 115-628) or paste link.');
       return;
     }
 
@@ -240,12 +241,12 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
         setInputCode('');
       } else {
         const allLogs = getAllStoredLogsWithTombstones();
-        const success = await pushDataToCloud(cleanDigits, allLogs, profile);
-        if (success) {
+        const res = await pushDataToCloud(cleanDigits, allLogs, profile);
+        if (res.success) {
           onConnectSync(formattedCode);
           setInputCode('');
         } else {
-          setErrorMsg(isVI ? 'Không tìm thấy dữ liệu cho mã 6 số này.' : 'No data found for this code.');
+          setErrorMsg(isVI ? 'Không tìm thấy dữ liệu cho mã kết nối này.' : 'No data found for this code.');
         }
       }
     } catch (err: any) {

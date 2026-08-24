@@ -1,10 +1,34 @@
 import { DailyLog, UserProfile, SyncStatus } from '../types/health';
-import { sanitizeLog, saveLogsWithTombstones, saveProfile, saveLastSyncTime, getAllStoredLogsWithTombstones, getStoredProfile } from '../utils/storageUtils';
+import {
+  saveLogsWithTombstones,
+  saveProfile,
+  saveLastSyncTime,
+  getStoredSyncToken,
+} from '../utils/storageUtils';
+import {
+  mergeLogsConflictSafe,
+  mergeProfilesConflictSafe,
+  sanitizeLog,
+  getTimestampMs,
+} from '../utils/syncEngine';
+
+export { mergeLogsConflictSafe, mergeProfilesConflictSafe };
 
 export interface CloudSyncPayload {
   logs: DailyLog[];
   profile: UserProfile;
   updatedAt: string;
+  version?: number;
+}
+
+export interface SyncPushResult {
+  success: boolean;
+  data?: {
+    logs: DailyLog[];
+    profile: UserProfile;
+    updatedAt: string;
+  };
+  error?: string;
 }
 
 /**
@@ -12,7 +36,7 @@ export interface CloudSyncPayload {
  */
 export function normalizeSyncCode(code: string): string {
   if (!code) return '';
-  return code.trim().replace(/[^0-9]/g, '');
+  return code.trim().replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
 /**
@@ -20,7 +44,7 @@ export function normalizeSyncCode(code: string): string {
  */
 export function formatDisplayCode(code: string): string {
   const digits = normalizeSyncCode(code);
-  if (digits.length === 6) {
+  if (digits.length === 6 && /^\d+$/.test(digits)) {
     return `${digits.slice(0, 3)}-${digits.slice(3)}`;
   }
   return digits || code;
@@ -34,112 +58,8 @@ export function generateNumericSyncCode(): string {
   return `${Math.floor(num / 1000)}-${num % 1000}`;
 }
 
-/**
- * Compare two ISO-8601 timestamps safely
- */
-function getTimestampMs(isoString?: string | null): number {
-  if (!isoString) return 0;
-  const parsed = new Date(isoString).getTime();
-  return isNaN(parsed) ? 0 : parsed;
-}
-
-/**
- * Conflict-Safe Log Merge based on per-record updatedAt and deletedAt (tombstones)
- * DOES NOT bias toward local or remote; the newer updatedAt strictly wins.
- */
-export function mergeLogsConflictSafe(local: DailyLog[] = [], remote: DailyLog[] = []): DailyLog[] {
-  const safeLocal = (Array.isArray(local) ? local : []).map(sanitizeLog).filter((l): l is DailyLog => l !== null);
-  const safeRemote = (Array.isArray(remote) ? remote : []).map(sanitizeLog).filter((l): l is DailyLog => l !== null);
-
-  const map = new Map<string, DailyLog>();
-
-  // Process all local records
-  safeLocal.forEach(localLog => {
-    map.set(localLog.date, localLog);
-  });
-
-  // Merge remote records against local records per date
-  safeRemote.forEach(remoteLog => {
-    const existing = map.get(remoteLog.date);
-    if (!existing) {
-      map.set(remoteLog.date, remoteLog);
-      return;
-    }
-
-    const localUpdatedMs = getTimestampMs(existing.updatedAt || existing.createdAt);
-    const remoteUpdatedMs = getTimestampMs(remoteLog.updatedAt || remoteLog.createdAt);
-
-    if (remoteUpdatedMs > localUpdatedMs) {
-      // Remote is strictly newer -> remote wins
-      map.set(remoteLog.date, remoteLog);
-    } else if (remoteUpdatedMs < localUpdatedMs) {
-      // Local is strictly newer -> local wins (keep existing)
-    } else {
-      // Tie-breaker: If one is deleted, tombstone wins. Otherwise, deterministic id compare.
-      if (remoteLog.deletedAt && !existing.deletedAt) {
-        map.set(remoteLog.date, remoteLog);
-      } else if (!remoteLog.deletedAt && existing.deletedAt) {
-        // keep existing tombstone
-      } else {
-        // Merge field values deterministically
-        map.set(remoteLog.date, {
-          ...existing,
-          ...remoteLog,
-          caloIn: remoteLog.caloIn !== 0 ? remoteLog.caloIn : existing.caloIn,
-          caloOut: remoteLog.caloOut !== 0 ? remoteLog.caloOut : existing.caloOut,
-          note: remoteLog.note || existing.note || '',
-        });
-      }
-    }
-  });
-
-  return Array.from(map.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
-}
-
-/**
- * Merge legacy alias for compatibility
- */
 export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): DailyLog[] {
   return mergeLogsConflictSafe(local, remote);
-}
-
-/**
- * Conflict-Safe User Profile Merge based on updatedAt
- */
-export function mergeProfilesConflictSafe(local?: UserProfile | null, remote?: UserProfile | null): UserProfile {
-  if (!remote && !local) {
-    return {
-      name: 'Bảo Uyên',
-      gender: 'female',
-      birthDate: '1998-05-15',
-      height: 162,
-      weight: 54,
-      updatedAt: new Date().toISOString(),
-    };
-  }
-  if (!remote) return local!;
-  if (!local) return remote;
-
-  const localUpdatedMs = getTimestampMs(local.updatedAt);
-  const remoteUpdatedMs = getTimestampMs(remote.updatedAt);
-
-  if (remoteUpdatedMs > localUpdatedMs) {
-    return { ...remote };
-  } else if (localUpdatedMs > remoteUpdatedMs) {
-    return { ...local };
-  }
-
-  // Same timestamp tie-breaker
-  return {
-    name: local.name || remote.name || 'Bảo Uyên',
-    gender: local.gender || remote.gender || 'female',
-    birthDate: local.birthDate || remote.birthDate || '1998-05-15',
-    height: local.height || remote.height || 162,
-    weight: local.weight || remote.weight || 54,
-    avatarUrl: local.avatarUrl || remote.avatarUrl,
-    updatedAt: local.updatedAt || remote.updatedAt || new Date().toISOString(),
-    deviceId: local.deviceId || remote.deviceId,
-  };
 }
 
 export function mergeProfiles(local: UserProfile, remote?: UserProfile): UserProfile {
@@ -147,139 +67,99 @@ export function mergeProfiles(local: UserProfile, remote?: UserProfile): UserPro
 }
 
 /**
- * Push data to durable cloud backend with server-side conflict resolution
- * Returns true ONLY when persistent durable backend confirms write!
+ * Push data to canonical persistent backend with server-side conflict resolution.
+ * Returns success: true ONLY when persistent backend confirms durable write!
  */
 export async function pushDataToCloud(
   syncCode: string,
   logs: DailyLog[],
   profile: UserProfile
-): Promise<boolean> {
+): Promise<SyncPushResult> {
   const digits = normalizeSyncCode(syncCode);
-  if (!digits || digits.length !== 6) return false;
+  if (!digits) return { success: false, error: 'Mã kết nối không hợp lệ' };
 
-  const payload: CloudSyncPayload = {
-    logs: logs.map(l => sanitizeLog(l)).filter((l): l is DailyLog => l !== null),
-    profile,
-    updatedAt: new Date().toISOString(),
-  };
+  const sanitizedLogs = logs.map(l => sanitizeLog(l)).filter((l): l is DailyLog => l !== null);
+  const syncToken = getStoredSyncToken();
 
-  let durableWriteSuccess = false;
-
-  // 1. Primary: Serverless Sync API (Performs Server-side conflict-safe merge & durable persistence)
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 6000);
+    const timer = setTimeout(() => controller.abort(), 7000);
 
     const res = await fetch(`/api/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'x-sync-token': syncToken,
+      },
       body: JSON.stringify({
         code: digits,
-        logs: payload.logs,
-        profile: payload.profile,
-        updatedAt: payload.updatedAt,
+        logs: sanitizedLogs,
+        profile,
+        updatedAt: new Date().toISOString(),
       }),
       signal: controller.signal,
     });
     clearTimeout(timer);
 
     if (res.ok) {
-      durableWriteSuccess = true;
-      try {
-        const json = await res.json();
-        if (json && json.data && Array.isArray(json.data.logs)) {
-          // Update local with server-merged state
-          saveLogsWithTombstones(json.data.logs);
-          if (json.data.profile) saveProfile(json.data.profile);
-        }
-      } catch {}
+      const json = await res.json();
+      if (json && json.success && json.data && Array.isArray(json.data.logs)) {
+        const canonicalLogs = json.data.logs.map((l: any) => sanitizeLog(l)).filter((l: DailyLog | null): l is DailyLog => l !== null);
+        const canonicalProfile = json.data.profile || profile;
+
+        saveLogsWithTombstones(canonicalLogs);
+        saveProfile(canonicalProfile);
+        saveLastSyncTime(new Date().toISOString());
+
+        return {
+          success: true,
+          data: {
+            logs: canonicalLogs,
+            profile: canonicalProfile,
+            updatedAt: json.data.updatedAt || new Date().toISOString(),
+          },
+        };
+      }
     }
-  } catch (err) {
-    console.warn('/api/sync push error:', err);
+
+    return { success: false, error: 'Phản hồi từ máy chủ không hợp lệ' };
+  } catch (err: any) {
+    console.warn('Sync push error:', err);
+    return { success: false, error: err?.message || 'Lỗi mạng khi kết nối máy chủ' };
   }
-
-  // 2. Direct Durable Key-Value Store (cl1p.net persistent backend)
-  try {
-    const cl1pKey = `nutrifit_sync_${digits}`;
-    const cl1pRes = await fetch(`https://api.cl1p.net/${cl1pKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify(payload),
-    });
-    if (cl1pRes.ok || cl1pRes.status === 201) {
-      durableWriteSuccess = true;
-    }
-  } catch (err) {
-    console.warn('cl1p.net durable push error:', err);
-  }
-
-  // 3. Realtime Notification Transport (ntfy.sh event broadcast)
-  try {
-    fetch(`https://ntfy.sh/nutrifit_sync_${digits}`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    }).catch(() => {});
-  } catch {}
-
-  if (durableWriteSuccess) {
-    saveLastSyncTime(new Date().toISOString());
-    return true;
-  }
-
-  return false;
 }
 
 /**
- * Fetch remote state from durable cloud backend
+ * Fetch remote state from canonical backend
  */
 export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload | null> {
   const digits = normalizeSyncCode(syncCode);
-  if (!digits || digits.length !== 6) return null;
+  if (!digits) return null;
 
-  // 1. Fetch from Serverless Sync API FIRST
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
+    const timer = setTimeout(() => controller.abort(), 6000);
 
-    const res = await fetch(`/api/sync?code=${digits}&t=${Date.now()}`, { signal: controller.signal });
+    const res = await fetch(`/api/sync?code=${encodeURIComponent(digits)}&t=${Date.now()}`, {
+      headers: { 'x-sync-token': getStoredSyncToken() },
+      signal: controller.signal,
+    });
     clearTimeout(timer);
 
     if (res.ok) {
       const json = await res.json();
-      if (json && json.data && Array.isArray(json.data.logs)) {
+      if (json && json.success && json.data && Array.isArray(json.data.logs)) {
         const cleanLogs = json.data.logs.map((l: any) => sanitizeLog(l)).filter((l: DailyLog | null): l is DailyLog => l !== null);
         return {
           logs: cleanLogs,
           profile: json.data.profile || {},
           updatedAt: json.data.updatedAt || new Date().toISOString(),
+          version: json.data.version,
         };
       }
     }
   } catch (err) {
     console.warn('/api/sync fetch error:', err);
-  }
-
-  // 2. Fetch from Direct Durable Key-Value Store (cl1p.net)
-  try {
-    const cl1pKey = `nutrifit_sync_${digits}`;
-    const cl1pRes = await fetch(`https://api.cl1p.net/${cl1pKey}`);
-    if (cl1pRes.ok) {
-      const text = await cl1pRes.text();
-      if (text && text.trim().startsWith('{')) {
-        const parsed = JSON.parse(text);
-        if (parsed && Array.isArray(parsed.logs)) {
-          const cleanLogs = parsed.logs.map((l: any) => sanitizeLog(l)).filter((l: DailyLog | null): l is DailyLog => l !== null);
-          return {
-            logs: cleanLogs,
-            profile: parsed.profile || {},
-            updatedAt: parsed.updatedAt || new Date().toISOString(),
-          };
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('cl1p.net fetch error:', err);
   }
 
   return null;
@@ -288,7 +168,7 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
 /**
  * Startup 2-way Synchronization:
  * Reads remote state first, merges conflict-safe without destroying local newer edits,
- * and pushes back to cloud only if local has newer records.
+ * and pushes back to cloud only if local has newer records or profile.
  */
 export async function syncOnStartup(
   syncCode: string,
@@ -296,7 +176,7 @@ export async function syncOnStartup(
   localProfile: UserProfile
 ): Promise<{ logs: DailyLog[]; profile: UserProfile; status: SyncStatus }> {
   const digits = normalizeSyncCode(syncCode);
-  if (!digits || digits.length !== 6) {
+  if (!digits) {
     return {
       logs: localLogs.filter(l => !l.deletedAt),
       profile: localProfile,
@@ -308,11 +188,11 @@ export async function syncOnStartup(
     const remote = await fetchCloudData(digits);
     if (!remote) {
       // Remote does not exist yet (brand new code) -> Push initial local state
-      const pushOk = await pushDataToCloud(digits, localLogs, localProfile);
+      const pushRes = await pushDataToCloud(digits, localLogs, localProfile);
       return {
-        logs: localLogs.filter(l => !l.deletedAt),
-        profile: localProfile,
-        status: pushOk ? 'synced' : 'pending',
+        logs: (pushRes.data?.logs || localLogs).filter(l => !l.deletedAt),
+        profile: pushRes.data?.profile || localProfile,
+        status: pushRes.success ? 'synced' : 'pending',
       };
     }
 
@@ -323,19 +203,34 @@ export async function syncOnStartup(
     // Save merged state locally
     saveLogsWithTombstones(mergedLogsAll);
     saveProfile(mergedProfile);
-    saveLastSyncTime(new Date().toISOString());
 
-    // Check if local had newer changes that server needs to store
-    const localHasNewer = mergedLogsAll.some(m => {
+    // Check if local had newer changes (logs or profile) that server needs to store
+    const localHasNewerLogs = mergedLogsAll.some(m => {
       const remoteMatch = remote.logs.find(r => r.date === m.date);
       if (!remoteMatch) return true;
       return getTimestampMs(m.updatedAt) > getTimestampMs(remoteMatch.updatedAt);
     });
+    const localHasNewerProfile = getTimestampMs(localProfile.updatedAt) > getTimestampMs(remote.profile?.updatedAt);
+    const needsPush = localHasNewerLogs || localHasNewerProfile;
 
-    if (localHasNewer) {
-      await pushDataToCloud(digits, mergedLogsAll, mergedProfile);
+    if (needsPush) {
+      const pushRes = await pushDataToCloud(digits, mergedLogsAll, mergedProfile);
+      if (pushRes.success && pushRes.data) {
+        return {
+          logs: pushRes.data.logs.filter(l => !l.deletedAt),
+          profile: pushRes.data.profile,
+          status: 'synced',
+        };
+      } else {
+        return {
+          logs: mergedLogsAll.filter(l => !l.deletedAt),
+          profile: mergedProfile,
+          status: 'pending',
+        };
+      }
     }
 
+    saveLastSyncTime(new Date().toISOString());
     return {
       logs: mergedLogsAll.filter(l => !l.deletedAt),
       profile: mergedProfile,
@@ -352,33 +247,50 @@ export async function syncOnStartup(
 }
 
 /**
- * Subscribe to realtime Cloud sync updates using event transport
+ * Subscribe to realtime Cloud sync updates via event ping and visibility change
  */
 export function subscribeToCloudSync(
   syncCode: string,
-  onUpdate: (data: CloudSyncPayload) => void,
+  onUpdate: (data: { logs: DailyLog[]; profile: UserProfile }) => void,
   pollIntervalMs = 15000
 ): () => void {
   const digits = normalizeSyncCode(syncCode);
-  if (!digits || digits.length !== 6) return () => {};
+  if (!digits) return () => {};
 
-  let lastUpdatedAt = '';
+  let isSubscribed = true;
 
-  const checkUpdates = async () => {
-    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
-      return;
-    }
+  const checkForRemoteUpdates = async () => {
+    if (!isSubscribed) return;
     try {
-      const data = await fetchCloudData(digits);
-      if (data && data.updatedAt && data.updatedAt !== lastUpdatedAt) {
-        lastUpdatedAt = data.updatedAt;
-        onUpdate(data);
+      const remoteData = await fetchCloudData(digits);
+      if (remoteData && remoteData.logs && isSubscribed) {
+        onUpdate({
+          logs: remoteData.logs,
+          profile: remoteData.profile || {},
+        });
       }
     } catch {}
   };
 
-  const intervalId = setInterval(checkUpdates, pollIntervalMs);
-  return () => clearInterval(intervalId);
+  const intervalId = setInterval(checkForRemoteUpdates, pollIntervalMs);
+
+  const handleVisibilityChange = () => {
+    if (document.visibilityState === 'visible') {
+      checkForRemoteUpdates();
+    }
+  };
+
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+  }
+
+  return () => {
+    isSubscribed = false;
+    clearInterval(intervalId);
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }
+  };
 }
 
 /**

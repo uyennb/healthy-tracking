@@ -108,7 +108,33 @@ export function App() {
     }
   }, []);
 
-  // 2. Check URL query string for direct 1-click sync link (?sync=XXX-XXX&d=PAYLOAD)
+  // 2. Realtime Background Sync Subscription: Listen for remote changes when active tab or on reconnect
+  useEffect(() => {
+    if (!syncCode) return;
+
+    const unsubscribe = subscribeToCloudSync(syncCode, remoteData => {
+      if (remoteData && remoteData.logs) {
+        const currentLocal = getAllStoredLogsWithTombstones();
+        const mergedLogs = mergeLogsConflictSafe(currentLocal, remoteData.logs);
+        const currentProfile = getStoredProfile();
+        const mergedProfile = mergeProfilesConflictSafe(currentProfile, remoteData.profile);
+
+        saveLogsWithTombstones(mergedLogs);
+        saveProfile(mergedProfile);
+
+        setLogs(mergedLogs.filter(l => !l.deletedAt));
+        setProfile(mergedProfile);
+        setSyncStatus('synced');
+        const nowIso = new Date().toISOString();
+        setLastSyncTime(nowIso);
+        saveLastSyncTime(nowIso);
+      }
+    });
+
+    return () => unsubscribe();
+  }, [syncCode]);
+
+  // 3. Check URL query string for direct 1-click sync link (?sync=XXX-XXX&d=PAYLOAD)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -192,7 +218,7 @@ export function App() {
     return processChartData(filteredLogs);
   }, [filteredLogs]);
 
-  // Handle Save (Add/Edit) Log: immediate local save with updatedAt, then conflict-safe cloud push
+  // Handle Save (Add/Edit) Log: immediate local save with updatedAt, then server-side merge & canonical state reflection
   const handleSaveLog = (logData: Omit<DailyLog, 'id'> & { id?: string }) => {
     const updated = upsertLog(logData);
     setLogs(updated);
@@ -203,12 +229,12 @@ export function App() {
 
     if (syncCode) {
       setSyncStatus('syncing');
-      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profile).then(success => {
-        if (success) {
+      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profile).then(res => {
+        if (res.success && res.data) {
+          setLogs(res.data.logs.filter(l => !l.deletedAt));
+          setProfile(res.data.profile);
           setSyncStatus('synced');
-          const nowIso = new Date().toISOString();
-          setLastSyncTime(nowIso);
-          saveLastSyncTime(nowIso);
+          setLastSyncTime(res.data.updatedAt);
         } else {
           setSyncStatus('error');
         }
@@ -216,19 +242,19 @@ export function App() {
     }
   };
 
-  // Handle Delete Log: immediate local tombstone with deletedAt, then cloud push
+  // Handle Delete Log: immediate local tombstone with deletedAt, then cloud sync
   const handleDeleteLog = (id: string) => {
     const updated = deleteLog(id);
     setLogs(updated);
 
     if (syncCode) {
       setSyncStatus('syncing');
-      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profile).then(success => {
-        if (success) {
+      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profile).then(res => {
+        if (res.success && res.data) {
+          setLogs(res.data.logs.filter(l => !l.deletedAt));
+          setProfile(res.data.profile);
           setSyncStatus('synced');
-          const nowIso = new Date().toISOString();
-          setLastSyncTime(nowIso);
-          saveLastSyncTime(nowIso);
+          setLastSyncTime(res.data.updatedAt);
         } else {
           setSyncStatus('error');
         }
@@ -270,7 +296,16 @@ export function App() {
     saveProfile(profileWithMeta);
     setProfile(profileWithMeta);
     if (syncCode) {
-      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profileWithMeta);
+      setSyncStatus('syncing');
+      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profileWithMeta).then(res => {
+        if (res.success && res.data) {
+          setProfile(res.data.profile);
+          setSyncStatus('synced');
+          setLastSyncTime(res.data.updatedAt);
+        } else {
+          setSyncStatus('error');
+        }
+      }).catch(() => setSyncStatus('error'));
     }
   };
 
@@ -295,12 +330,14 @@ export function App() {
       setProfile(mergedProf);
 
       setSyncStatus('syncing');
-      pushDataToCloud(code, mergedLogs, mergedProf).then(success => {
-        setSyncStatus(success ? 'synced' : 'pending');
-        if (success) {
-          const nowIso = new Date().toISOString();
-          setLastSyncTime(nowIso);
-          saveLastSyncTime(nowIso);
+      pushDataToCloud(code, mergedLogs, mergedProf).then(res => {
+        if (res.success && res.data) {
+          setLogs(res.data.logs.filter(l => !l.deletedAt));
+          setProfile(res.data.profile);
+          setSyncStatus('synced');
+          setLastSyncTime(res.data.updatedAt);
+        } else {
+          setSyncStatus('pending');
         }
       });
     } else {

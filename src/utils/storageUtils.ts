@@ -1,13 +1,16 @@
 import { DailyLog, UserGoals, UserProfile, Language } from '../types/health';
 import { generateSampleData } from './sampleData';
+import { sanitizeLog, isExactSampleLog } from './syncEngine';
+
+export { sanitizeLog, isExactSampleLog };
 
 const LOGS_STORAGE_KEY = 'nutrifit_daily_logs_v2';
 const LEGACY_LOGS_KEY = 'nutrifit_daily_logs_v1';
-const GOALS_STORAGE_KEY = 'nutrifit_user_goals_v1';
 const PROFILE_STORAGE_KEY = 'nutrifit_user_profile_v2';
 const LEGACY_PROFILE_KEY = 'nutrifit_user_profile_v1';
 const LANGUAGE_STORAGE_KEY = 'nutrifit_language_v1';
 const SYNC_CODE_STORAGE_KEY = 'nutrifit_sync_code_v1';
+const SYNC_TOKEN_STORAGE_KEY = 'nutrifit_sync_token_v1';
 const DEVICE_ID_STORAGE_KEY = 'nutrifit_device_id_v1';
 const LAST_SYNC_TIME_KEY = 'nutrifit_last_sync_time_v1';
 
@@ -38,73 +41,67 @@ export function getDeviceId(): string {
 }
 
 /**
- * Sanitize log object and ensure robust ISO timestamps
+ * Get stored pairing secret token (high-entropy auth token)
  */
-export function sanitizeLog(log: any): DailyLog | null {
-  if (!log || typeof log !== 'object') return null;
-  const date = String(log.date || '').trim();
-  if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) return null;
+export function getStoredSyncToken(): string {
+  try {
+    let token = localStorage.getItem(SYNC_TOKEN_STORAGE_KEY);
+    if (!token) {
+      token = `stk_${Math.random().toString(36).substring(2, 12)}_${Date.now().toString(36)}`;
+      localStorage.setItem(SYNC_TOKEN_STORAGE_KEY, token);
+    }
+    return token;
+  } catch {
+    return 'stk_default_token';
+  }
+}
 
-  const baselineTime = '2026-08-20T00:00:00.000Z';
-  const createdAt = log.createdAt && typeof log.createdAt === 'string' ? log.createdAt : baselineTime;
-  const updatedAt = log.updatedAt && typeof log.updatedAt === 'string' ? log.updatedAt : createdAt;
-  const deletedAt = log.deletedAt && typeof log.deletedAt === 'string' ? log.deletedAt : null;
-  const deviceId = log.deviceId && typeof log.deviceId === 'string' ? log.deviceId : undefined;
-
-  return {
-    id: String(log.id || `log-${date}-${Math.random().toString(36).substring(2, 7)}`),
-    date,
-    caloIn: Math.max(0, Number(log.caloIn) || 0),
-    caloOut: Math.max(0, Number(log.caloOut) || 0),
-    protein: Math.max(0, Number(log.protein) || 0),
-    carbs: Math.max(0, Number(log.carbs) || 0),
-    fats: Math.max(0, Number(log.fats) || 0),
-    fiber: Math.max(0, Number(log.fiber) || 0),
-    workoutDuration: Math.max(0, Number(log.workoutDuration) || 0),
-    workoutCalo: Math.max(0, Number(log.workoutCalo) || 0),
-    note: String(log.note || ''),
-    createdAt,
-    updatedAt,
-    deletedAt,
-    deviceId,
-  };
+export function saveSyncToken(token: string): void {
+  try {
+    localStorage.setItem(SYNC_TOKEN_STORAGE_KEY, token);
+  } catch {}
 }
 
 /**
- * Get raw stored logs including tombstoned records (used for conflict resolution)
+ * Get raw stored logs including tombstoned records with safe legacy migration
  */
 export function getAllStoredLogsWithTombstones(): DailyLog[] {
   try {
     let raw = localStorage.getItem(LOGS_STORAGE_KEY);
 
-    // Migration from v1 storage key if v2 not found
+    // Safe migration from v1 storage key if v2 not found
     if (raw === null) {
       const legacyRaw = localStorage.getItem(LEGACY_LOGS_KEY);
       if (legacyRaw !== null) {
         try {
           const parsedLegacy = JSON.parse(legacyRaw);
           if (Array.isArray(parsedLegacy)) {
-            const now = new Date().toISOString();
-            const migrated = parsedLegacy.map(l => ({
-              ...l,
-              createdAt: l.createdAt || now,
-              updatedAt: l.updatedAt || now,
-              deletedAt: null,
-            })).map(sanitizeLog).filter((l): l is DailyLog => l !== null);
+            const migrated = parsedLegacy.map(legacyItem => {
+              const isSample = isExactSampleLog(legacyItem);
+              return sanitizeLog({
+                ...legacyItem,
+                timestampConfidence: isSample ? 'sample' : 'legacy_inferred',
+                createdAt: legacyItem.createdAt || (isSample ? '1970-01-01T00:00:00.000Z' : '2026-08-20T00:00:00.000Z'),
+                updatedAt: legacyItem.updatedAt || (isSample ? '1970-01-01T00:00:00.000Z' : '2026-08-20T00:00:00.000Z'),
+                deletedAt: null,
+              });
+            }).filter((l): l is DailyLog => l !== null);
+
             localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(migrated));
             return migrated;
           }
         } catch {}
       }
 
-      // If completely fresh user with no existing storage key, initialize sample data
-      const now = new Date().toISOString();
-      const initial = generateSampleData(10).map(l => ({
+      // If user has never had any storage key before (completely fresh install), seed initial sample data
+      const initial = generateSampleData(10).map(l => sanitizeLog({
         ...l,
-        createdAt: now,
-        updatedAt: now,
+        timestampConfidence: 'sample',
+        createdAt: '1970-01-01T00:00:00.000Z',
+        updatedAt: '1970-01-01T00:00:00.000Z',
         deletedAt: null,
-      }));
+      })).filter((l): l is DailyLog => l !== null);
+
       localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(initial));
       return initial;
     }
@@ -144,14 +141,13 @@ export function saveLogsWithTombstones(logs: DailyLog[]): void {
 }
 
 /**
- * Save active logs list (preserves existing tombstones in storage)
+ * Save active logs list while preserving existing tombstones in storage
  */
 export function saveLogs(activeLogs: DailyLog[]): void {
   try {
     const existing = getAllStoredLogsWithTombstones();
     const tombstones = existing.filter(l => l.deletedAt);
 
-    // Combine active logs and existing tombstones
     const map = new Map<string, DailyLog>();
     tombstones.forEach(t => map.set(t.date, t));
     activeLogs.forEach(a => map.set(a.date, a));
@@ -163,7 +159,7 @@ export function saveLogs(activeLogs: DailyLog[]): void {
 }
 
 /**
- * Add or update a single daily log with accurate updatedAt timestamp
+ * Add or update a single daily log with authoritative updatedAt timestamp
  */
 export function upsertLog(newLog: Omit<DailyLog, 'id'> & { id?: string }): DailyLog[] {
   const allLogs = getAllStoredLogsWithTombstones();
@@ -171,7 +167,6 @@ export function upsertLog(newLog: Omit<DailyLog, 'id'> & { id?: string }): Daily
   const devId = getDeviceId();
 
   const existingIndex = allLogs.findIndex(l => l.date === newLog.date || (newLog.id && l.id === newLog.id));
-
   const finalId = newLog.id || `log-${newLog.date}-${Date.now().toString(36)}`;
   const createdAt = existingIndex >= 0 ? (allLogs[existingIndex].createdAt || now) : now;
 
@@ -182,6 +177,7 @@ export function upsertLog(newLog: Omit<DailyLog, 'id'> & { id?: string }): Daily
     updatedAt: now,
     deletedAt: null,
     deviceId: devId,
+    timestampConfidence: 'authoritative',
   };
 
   const sanitized = sanitizeLog(fullLog);
@@ -214,6 +210,7 @@ export function deleteLog(idOrDate: string): DailyLog[] {
         updatedAt: now,
         deletedAt: now,
         deviceId: devId,
+        timestampConfidence: 'authoritative' as const,
       };
     }
     return l;
@@ -224,13 +221,14 @@ export function deleteLog(idOrDate: string): DailyLog[] {
 }
 
 export function resetToSampleData(): DailyLog[] {
-  const now = new Date().toISOString();
-  const samples = generateSampleData(8).map(l => ({
+  const samples = generateSampleData(8).map(l => sanitizeLog({
     ...l,
-    createdAt: now,
-    updatedAt: now,
+    timestampConfidence: 'sample',
+    createdAt: '1970-01-01T00:00:00.000Z',
+    updatedAt: '1970-01-01T00:00:00.000Z',
     deletedAt: null,
-  }));
+  })).filter((l): l is DailyLog => l !== null);
+
   saveLogsWithTombstones(samples);
   return samples;
 }
@@ -243,6 +241,7 @@ export function clearAllLogs(): DailyLog[] {
     updatedAt: now,
     deletedAt: now,
     deviceId: getDeviceId(),
+    timestampConfidence: 'authoritative' as const,
   }));
   saveLogsWithTombstones(tombstones);
   return [];
@@ -319,6 +318,7 @@ export function saveSyncCode(code: string): void {
 export function clearSyncCode(): void {
   try {
     localStorage.removeItem(SYNC_CODE_STORAGE_KEY);
+    localStorage.removeItem(SYNC_TOKEN_STORAGE_KEY);
   } catch {}
 }
 
@@ -349,7 +349,7 @@ export function exportLogsToJSON(logs: DailyLog[]): void {
 export function exportFullBackup(logs: DailyLog[], profile: UserProfile): void {
   const backupObj = {
     app: 'NutriFit',
-    version: '3.0',
+    version: '4.0',
     exportDate: new Date().toISOString(),
     logs,
     profile,
@@ -377,7 +377,11 @@ export function importFullBackup(jsonStr: string): { logs?: DailyLog[]; profile?
     }
 
     if (logs && logs.length > 0) {
-      const sanitized = logs.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
+      const sanitized = logs.map(l => sanitizeLog({
+        ...l,
+        timestampConfidence: 'authoritative',
+        updatedAt: new Date().toISOString(),
+      })).filter((l): l is DailyLog => l !== null);
       return { logs: sanitized, profile };
     }
     return null;

@@ -14,6 +14,7 @@ export interface DailyLog {
   updatedAt?: string; // ISO 8601 format
   deletedAt?: string | null; // ISO 8601 format tombstone
   deviceId?: string;
+  timestampConfidence?: 'authoritative' | 'legacy_inferred' | 'sample';
 }
 
 export type PeriodType = 'all' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
