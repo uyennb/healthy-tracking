@@ -1,6 +1,7 @@
 // Vercel Serverless Function for NutriFit 6-Digit Realtime Cloud Sync
-const REST_URL = 'https://api.restful-api.dev/objects';
-const MASTER_INDEX_ID = 'ff8081819ff5b11001a02d5eafe47e4d';
+// Powered by zero-rate-limit paste storage engine
+
+let MASTER_INDEX_URL = 'https://paste.rs/Qtyao';
 
 export default async function handler(req, res) {
   // CORS Headers
@@ -37,34 +38,40 @@ export default async function handler(req, res) {
       };
 
       try {
-        // 1. Create payload object
-        const postRes = await fetch(REST_URL, {
+        // 1. Store payload to paste.rs
+        const postRes = await fetch('https://paste.rs', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: `nutrifit_code_${cleanCode}`, data: payload }),
+          body: JSON.stringify(payload),
         });
 
         if (postRes.ok) {
-          const created = await postRes.json();
-          if (created && created.id) {
+          const itemUrl = (await postRes.text()).trim();
+          if (itemUrl && itemUrl.startsWith('http')) {
             // 2. Fetch master index
             let indexMap = {};
-            const indexRes = await fetch(`${REST_URL}/${MASTER_INDEX_ID}`);
-            if (indexRes.ok) {
-              const indexObj = await indexRes.json();
-              indexMap = indexObj.data || {};
-            }
-            // 3. Update master index map with cleanCode -> created.id
-            indexMap[cleanCode] = created.id;
-            await fetch(`${REST_URL}/${MASTER_INDEX_ID}`, {
-              method: 'PUT',
+            try {
+              const idxRes = await fetch(MASTER_INDEX_URL);
+              if (idxRes.ok) indexMap = await idxRes.json();
+            } catch {}
+
+            // 3. Update master index map with cleanCode -> itemUrl
+            indexMap[cleanCode] = itemUrl;
+            const newIdxRes = await fetch('https://paste.rs', {
+              method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ name: 'nutrifit_master_index_v6', data: indexMap }),
+              body: JSON.stringify(indexMap),
             });
+            if (newIdxRes.ok) {
+              const newUrl = (await newIdxRes.text()).trim();
+              if (newUrl && newUrl.startsWith('http')) {
+                MASTER_INDEX_URL = newUrl;
+              }
+            }
           }
         }
       } catch (e) {
-        console.warn('REST update error:', e);
+        console.warn('paste.rs update error:', e);
       }
 
       return res.status(200).json({ success: true, code: cleanCode, payload });
@@ -72,24 +79,24 @@ export default async function handler(req, res) {
 
     if (req.method === 'GET') {
       try {
-        // 1. Fetch master index
-        const indexRes = await fetch(`${REST_URL}/${MASTER_INDEX_ID}`);
-        if (indexRes.ok) {
-          const indexObj = await indexRes.json();
-          const targetId = indexObj?.data?.[cleanCode];
+        let indexMap = {};
+        try {
+          const idxRes = await fetch(MASTER_INDEX_URL);
+          if (idxRes.ok) indexMap = await idxRes.json();
+        } catch {}
 
-          if (targetId) {
-            const payloadRes = await fetch(`${REST_URL}/${targetId}`);
-            if (payloadRes.ok) {
-              const item = await payloadRes.json();
-              if (item && item.data && Array.isArray(item.data.logs)) {
-                return res.status(200).json({ success: true, data: item.data });
-              }
+        const itemUrl = indexMap[cleanCode];
+        if (itemUrl) {
+          const itemRes = await fetch(itemUrl);
+          if (itemRes.ok) {
+            const data = await itemRes.json();
+            if (data && Array.isArray(data.logs)) {
+              return res.status(200).json({ success: true, data });
             }
           }
         }
       } catch (e) {
-        console.warn('REST fetch error:', e);
+        console.warn('paste.rs fetch error:', e);
       }
 
       return res.status(404).json({ error: 'Chưa có dữ liệu cho mã 6 số này' });

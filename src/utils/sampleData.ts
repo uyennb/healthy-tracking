@@ -2,6 +2,32 @@ import { DailyLog } from '../types/health';
 
 export const USER_REAL_LOGS: DailyLog[] = [
   {
+    id: 'log-2026-08-23',
+    date: '2026-08-23',
+    caloIn: 1350,
+    protein: 78,
+    carbs: 130,
+    fats: 58,
+    fiber: 18,
+    workoutDuration: 2700, // 45:00
+    workoutCalo: 180,
+    caloOut: 1450,
+    note: 'Nhật ký ngày 23/8',
+  },
+  {
+    id: 'log-2026-08-22',
+    date: '2026-08-22',
+    caloIn: 1420,
+    protein: 80,
+    carbs: 145,
+    fats: 62,
+    fiber: 20,
+    workoutDuration: 3000, // 50:00
+    workoutCalo: 210,
+    caloOut: 1550,
+    note: 'Nhật ký ngày 22/8',
+  },
+  {
     id: 'log-2026-08-21',
     date: '2026-08-21',
     caloIn: 1250,
@@ -107,6 +133,6 @@ export const USER_REAL_LOGS: DailyLog[] = [
   },
 ];
 
-export function generateSampleData(days = 8): DailyLog[] {
+export function generateSampleData(days = 10): DailyLog[] {
   return [...USER_REAL_LOGS];
 }
