@@ -41,17 +41,9 @@ export function sanitizeLog(log: any): DailyLog | null {
 
 export function getStoredLogs(): DailyLog[] {
   try {
-    const isMigrated = localStorage.getItem(REAL_DATA_MIGRATION_KEY);
-    if (!isMigrated) {
-      const realLogs = generateSampleData(8);
-      saveLogs(realLogs);
-      localStorage.setItem(REAL_DATA_MIGRATION_KEY, 'true');
-      return realLogs;
-    }
-
     const raw = localStorage.getItem(LOGS_STORAGE_KEY);
     if (!raw) {
-      const realLogs = generateSampleData(8);
+      const realLogs = generateSampleData(10);
       saveLogs(realLogs);
       return realLogs;
     }
@@ -59,15 +51,24 @@ export function getStoredLogs(): DailyLog[] {
     if (Array.isArray(parsed) && parsed.length > 0) {
       const valid = parsed.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
       if (valid.length > 0) {
-        return valid.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+        // Guarantee 22/8 and 23/8 default entries are always present if missing from local array
+        const defaultSample = generateSampleData(10);
+        const map = new Map<string, DailyLog>();
+        // Add default sample logs first
+        defaultSample.forEach(l => map.set(l.date, l));
+        // User's valid local logs override default sample logs
+        valid.forEach(l => map.set(l.date, l));
+        const merged = Array.from(map.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
+        saveLogs(merged);
+        return merged;
       }
     }
-    const realLogs = generateSampleData(8);
+    const realLogs = generateSampleData(10);
     saveLogs(realLogs);
     return realLogs;
   } catch (err) {
     console.error('Error reading logs from LocalStorage', err);
-    return generateSampleData(8);
+    return generateSampleData(10);
   }
 }
 

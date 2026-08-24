@@ -18,7 +18,7 @@ import { vi, enUS } from 'date-fns/locale';
 import { DailyLog, PeriodType, CustomDateRange, AggregatedData, Language } from '../types/health';
 
 /**
- * Filter logs based on period selection
+ * Filter logs based on period selection (Always sorted newest dates first!)
  */
 export function filterLogsByPeriod(
   logs: DailyLog[],
@@ -29,7 +29,7 @@ export function filterLogsByPeriod(
   const safeLogs = (Array.isArray(logs) ? logs : []).filter(l => l && typeof l === 'object' && l.date && typeof l.date === 'string');
 
   if (period === 'all') {
-    return [...safeLogs].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    return [...safeLogs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
   }
 
   if (period === 'custom' && customRange?.startDate && customRange?.endDate) {
@@ -39,7 +39,7 @@ export function filterLogsByPeriod(
       start = startOfDay(parseISO(customRange.startDate));
       end = endOfDay(parseISO(customRange.endDate));
     } catch {
-      return safeLogs;
+      return [...safeLogs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
     }
     return safeLogs.filter(log => {
       try {
@@ -48,7 +48,7 @@ export function filterLogsByPeriod(
       } catch {
         return false;
       }
-    }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+    }).sort((a, b) => String(b.date).localeCompare(String(a.date)));
   }
 
   let start: Date;
@@ -83,7 +83,7 @@ export function filterLogsByPeriod(
     } catch {
       return false;
     }
-  }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
+  }).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
 /**
