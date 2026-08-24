@@ -5,16 +5,11 @@ import { Language, DailyLog, UserProfile, SyncStatus } from '../../types/health'
 import { getTranslation } from '../../utils/i18n';
 import { exportFullBackup, importFullBackup, getAllStoredLogsWithTombstones, getStoredSyncToken, saveSyncToken, saveLogsWithTombstones, saveProfile } from '../../utils/storageUtils';
 import {
-  generateNumericSyncCode,
   formatDisplayCode,
   normalizeSyncCode,
   pushDataToCloud,
   pullFromCloud,
-  fetchCloudDataDetailed,
-  reconcileWithCloud,
-  encodeDataToBase64,
   decodeDataFromBase64,
-  decodeDataFromBase64Async,
 } from '../../services/cloudSyncService';
 import { generateSecureToken } from '../../utils/syncEngine';
 
@@ -181,28 +176,6 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     }
   };
 
-  const handleGenerateNewCode = async () => {
-    setIsConnecting(true);
-    setErrorMsg('');
-    const newCode = generateNumericSyncCode();
-    const newToken = generateSecureToken();
-    saveSyncToken(newToken);
-
-    try {
-      const allLogs = getAllStoredLogsWithTombstones();
-      const res = await pushDataToCloud(newCode, allLogs, profile, newToken);
-      setIsConnecting(false);
-      if (res.success) {
-        onConnectSync(newCode);
-      } else {
-        setErrorMsg(res.error || (isVI ? 'Không thể tạo mã kết nối Cloud. Vui lòng kiểm tra mạng.' : 'Failed to generate sync code.'));
-      }
-    } catch (err: any) {
-      setIsConnecting(false);
-      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server error.'));
-    }
-  };
-
   const handleConnectExistingCode = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = inputCode.trim();
@@ -210,7 +183,6 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
     setErrorMsg('');
 
-    // 1. If user pasted a full URL or direct sync link
     let extractedCode = '';
     let extractedToken = '';
 
@@ -250,7 +222,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     const cleanDigits = normalizeSyncCode(codeToUse);
 
     if (!cleanDigits || cleanDigits.length < 4) {
-      setErrorMsg(isVI ? 'Vui lòng nhập mã kết nối hợp lệ (ví dụ: 686-888) hoặc dán link đồng bộ.' : 'Please enter a valid sync code (e.g. 686-888) or paste sync link.');
+      setErrorMsg(isVI ? 'Vui lòng dán link đồng bộ hợp lệ.' : 'Please paste a valid sync link.');
       return;
     }
 
@@ -263,7 +235,6 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
     try {
       const allLogs = getAllStoredLogsWithTombstones();
-      // Flow: GET canonical Cloud state first without prior local push!
       const res = await pullFromCloud(cleanDigits, allLogs, profile, extractedToken || undefined);
       setIsConnecting(false);
 
@@ -276,7 +247,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             ? (isVI
                 ? 'Thiết bị này chưa được ghép nối đúng. Hãy dùng Link đồng bộ có Token từ thiết bị chính (hoặc quét mã QR).'
                 : 'This device is not paired with the correct token. Please use the Sync Link with Token from your primary device.')
-            : (res.error || (isVI ? 'Không thể kết nối với mã này.' : 'Failed to connect with this code.'))
+            : (res.error || (isVI ? 'Không thể kết nối với link này.' : 'Failed to connect with this link.'))
         );
       }
     } catch (err: any) {
@@ -519,14 +490,39 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             </div>
           </div>
         ) : (
-          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 mb-4 text-center">
-            <CloudOff className="w-8 h-8 text-slate-400 mx-auto mb-1.5" />
-            <p className="text-xs font-bold text-slate-700">
-              {isVI ? 'Chưa bật Đồng bộ Cloud' : 'Cloud Sync Not Active'}
-            </p>
-            <p className="text-[11px] text-slate-400 mt-0.5">
-              {isVI ? 'Tạo mã 6 số mới hoặc nhập mã để đồng bộ' : 'Generate 6-digit code or enter code to sync'}
-            </p>
+          <div className="space-y-4 mb-4">
+            <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 text-center">
+              <CloudOff className="w-8 h-8 text-slate-400 mx-auto mb-1.5" />
+              <p className="text-xs font-bold text-slate-700">
+                {isVI ? 'Chưa kết nối Đồng bộ Cloud' : 'Cloud Sync Not Connected'}
+              </p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {isVI ? 'Dán link đồng bộ từ thiết bị chính để kết nối' : 'Paste sync link from your primary device'}
+              </p>
+            </div>
+
+            <form onSubmit={handleConnectExistingCode} className="space-y-2">
+              <label className="block text-xs font-bold text-slate-700">
+                {isVI ? 'Dán link đồng bộ (kèm token):' : 'Paste sync link (with token):'}
+              </label>
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={inputCode}
+                  onChange={e => setInputCode(e.target.value)}
+                  placeholder={isVI ? 'Dán link đồng bộ vào đây...' : 'Paste sync link here...'}
+                  className="flex-1 px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none font-mono"
+                />
+                <button
+                  type="submit"
+                  disabled={isAnyActionBusy || !inputCode.trim()}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition disabled:opacity-50 flex items-center gap-1"
+                >
+                  {isConnecting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                  <span>{isVI ? 'Kết nối' : 'Connect'}</span>
+                </button>
+              </div>
+            </form>
           </div>
         )}
 
@@ -538,107 +534,54 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           </div>
         )}
 
-        {/* Connection Form & Actions */}
-        <div className="space-y-4">
-          <button
-            type="button"
-            disabled={isAnyActionBusy}
-            onClick={handleGenerateNewCode}
-            className="w-full bg-gradient-to-r from-emerald-500 to-teal-500 hover:from-emerald-600 hover:to-teal-600 text-white font-extrabold py-3 px-4 rounded-2xl shadow-md shadow-emerald-500/20 active:scale-[0.98] transition flex items-center justify-center gap-2 text-xs disabled:opacity-60"
-          >
-            {isConnecting ? (
-              <>
-                <RefreshCw className="w-4 h-4 animate-spin" />
-                <span>{isVI ? 'Đang tạo mã 6 số...' : 'Generating 6-digit code...'}</span>
-              </>
-            ) : (
-              <>
-                <Cloud className="w-4 h-4" />
-                <span>{isVI ? 'Tạo Mã 6 Số Mới (VD: 686-888)' : 'Generate New 6-Digit Code (e.g. 686-888)'}</span>
-              </>
-            )}
-          </button>
+        {/* Backup / Restore via File Option */}
+        <div className="pt-3 border-t border-slate-200 mt-2 space-y-2">
+          <span className="block text-xs font-black text-slate-700 uppercase tracking-wider">
+            {isVI ? '📁 Xuất / Nhập File Dữ Liệu' : '📁 Backup / Restore File'}
+          </span>
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => exportFullBackup(getAllStoredLogsWithTombstones(), profile)}
+              className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition active:scale-95"
+            >
+              <Download className="w-4 h-4 text-emerald-600" />
+              <span>{isVI ? 'Tải File JSON' : 'Export File'}</span>
+            </button>
 
-          <div className="relative flex py-1 items-center">
-            <div className="flex-grow border-t border-slate-200" />
-            <span className="flex-shrink mx-3 text-[11px] font-bold text-slate-400 uppercase">
-              {isVI ? 'HOẶC' : 'OR'}
-            </span>
-            <div className="flex-grow border-t border-slate-200" />
-          </div>
-
-          <form onSubmit={handleConnectExistingCode} className="space-y-2">
-            <label className="block text-xs font-bold text-slate-700">
-              {isVI ? 'Dán link đồng bộ hoặc nhập mã 6 số:' : 'Paste sync link or enter 6-digit code:'}
-            </label>
-            <div className="flex gap-2">
+            <label className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold transition active:scale-95 cursor-pointer">
+              <Upload className="w-4 h-4 text-teal-600" />
+              <span>{isVI ? 'Nhập File JSON' : 'Import File'}</span>
               <input
-                type="text"
-                value={inputCode}
-                onChange={e => setInputCode(e.target.value)}
-                placeholder={isVI ? 'Dán link có token hoặc VD: 686-888' : 'Paste link with token or e.g. 686-888'}
-                className="flex-1 px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none font-mono"
-              />
-              <button
-                type="submit"
-                disabled={isAnyActionBusy || !inputCode.trim()}
-                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition disabled:opacity-50 flex items-center gap-1"
-              >
-                {isConnecting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
-                <span>{isVI ? 'Kết nối' : 'Connect'}</span>
-              </button>
-            </div>
-          </form>
-
-          {/* Backup / Restore via File Option */}
-          <div className="pt-3 border-t border-slate-200 mt-4 space-y-2">
-            <span className="block text-xs font-black text-slate-700 uppercase tracking-wider">
-              {isVI ? '📁 Xuất / Nhập File Dữ Liệu' : '📁 Backup / Restore File'}
-            </span>
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                type="button"
-                onClick={() => exportFullBackup(getAllStoredLogsWithTombstones(), profile)}
-                className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition active:scale-95"
-              >
-                <Download className="w-4 h-4 text-emerald-600" />
-                <span>{isVI ? 'Tải File JSON' : 'Export File'}</span>
-              </button>
-
-              <label className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold transition active:scale-95 cursor-pointer">
-                <Upload className="w-4 h-4 text-teal-600" />
-                <span>{isVI ? 'Nhập File JSON' : 'Import File'}</span>
-                <input
-                  type="file"
-                  accept=".json"
-                  className="hidden"
-                  onChange={e => {
-                    const file = e.target.files?.[0];
-                    if (file) {
-                      const reader = new FileReader();
-                      reader.onload = event => {
-                        const content = event.target?.result as string;
-                        if (content) {
-                          const imported = importFullBackup(content);
-                          if (imported && imported.logs && imported.logs.length > 0) {
-                            if (syncCode) {
-                              onConnectSync(syncCode, { logs: imported.logs, profile: imported.profile || profile });
-                            } else {
-                              saveLogsWithTombstones(imported.logs);
-                              if (imported.profile) saveProfile(imported.profile);
-                            }
-                            onClose();
+                type="file"
+                accept=".json"
+                className="hidden"
+                onChange={e => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onload = event => {
+                      const content = event.target?.result as string;
+                      if (content) {
+                        const imported = importFullBackup(content);
+                        if (imported && imported.logs && imported.logs.length > 0) {
+                          if (syncCode) {
+                            onConnectSync(syncCode, { logs: imported.logs, profile: imported.profile || profile });
                           } else {
-                            setErrorMsg(isVI ? 'File JSON không hợp lệ!' : 'Invalid JSON file!');
+                            saveLogsWithTombstones(imported.logs);
+                            if (imported.profile) saveProfile(imported.profile);
                           }
+                          onClose();
+                        } else {
+                          setErrorMsg(isVI ? 'File JSON không hợp lệ!' : 'Invalid JSON file!');
                         }
-                      };
-                      reader.readAsText(file);
-                    }
-                  }}
-                />
-              </label>
-            </div>
+                      }
+                    };
+                    reader.readAsText(file);
+                  }
+                }}
+              />
+            </label>
           </div>
         </div>
       </div>
