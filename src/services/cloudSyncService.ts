@@ -158,7 +158,7 @@ export function mergeSingleLog(logA: DailyLog, logB: DailyLog): DailyLog {
 }
 
 /**
- * Safely merge local and remote daily logs by date: real user logs ALWAYS override sample logs!
+ * Safely merge local and remote daily logs by date: incoming remote logs (pushed from phone) override matching local dates
  */
 export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): DailyLog[] {
   if (!remote || remote.length === 0) return local || [];
@@ -166,22 +166,17 @@ export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): Dail
 
   const map = new Map<string, DailyLog>();
 
-  // Add remote logs first
-  remote.forEach(log => {
+  // Add local logs first
+  local.forEach(log => {
     if (log && log.date) {
       map.set(log.date, log);
     }
   });
 
-  // Process local logs using mergeSingleLog
-  local.forEach(log => {
+  // Incoming remote logs (from Cloud) OVERRIDE matching local dates to guarantee updated user data
+  remote.forEach(log => {
     if (log && log.date) {
-      const existing = map.get(log.date);
-      if (!existing) {
-        map.set(log.date, log);
-      } else {
-        map.set(log.date, mergeSingleLog(existing, log));
-      }
+      map.set(log.date, { ...log });
     }
   });
 
