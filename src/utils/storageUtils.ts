@@ -158,6 +158,46 @@ export function exportLogsToJSON(logs: DailyLog[]): void {
   downloadAnchor.remove();
 }
 
+export function exportFullBackup(logs: DailyLog[], profile: UserProfile): void {
+  const backupObj = {
+    app: 'NutriFit',
+    version: '2.0',
+    exportDate: new Date().toISOString(),
+    logs,
+    profile,
+  };
+  const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(backupObj, null, 2));
+  const downloadAnchor = document.createElement('a');
+  downloadAnchor.setAttribute('href', dataStr);
+  downloadAnchor.setAttribute('download', `nutrifit_backup_${new Date().toISOString().slice(0, 10)}.json`);
+  document.body.appendChild(downloadAnchor);
+  downloadAnchor.click();
+  downloadAnchor.remove();
+}
+
+export function importFullBackup(jsonStr: string): { logs?: DailyLog[]; profile?: UserProfile } | null {
+  try {
+    const parsed = JSON.parse(jsonStr);
+    let logs: DailyLog[] = [];
+    let profile: UserProfile | undefined = undefined;
+
+    if (Array.isArray(parsed)) {
+      logs = parsed;
+    } else if (parsed && Array.isArray(parsed.logs)) {
+      logs = parsed.logs;
+      if (parsed.profile) profile = parsed.profile;
+    }
+
+    if (logs && logs.length > 0) {
+      return { logs, profile };
+    }
+    return null;
+  } catch (err) {
+    console.error('Error importing backup JSON:', err);
+    return null;
+  }
+}
+
 export function exportLogsToCSV(logs: DailyLog[]): void {
   const headers = ['Ngay', 'CaloIn', 'Protein(g)', 'Carbs(g)', 'Fats(g)', 'Fiber(g)', 'Tap(phut)', 'CaloTap', 'CaloOut(TDEE)', 'GhiChu'];
   const rows = logs.map(l => [

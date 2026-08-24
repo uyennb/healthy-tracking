@@ -1,8 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldCheck, Zap, Link } from 'lucide-react';
+import React, { useState } from 'react';
+import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldCheck, Zap, Link, Download, Upload } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Language, DailyLog, UserProfile } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
+import { exportFullBackup, importFullBackup } from '../../utils/storageUtils';
 import {
   generateNumericSyncCode,
   formatDisplayCode,
@@ -227,7 +228,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           </div>
           <div>
             <h3 className="text-lg font-black text-slate-800">
-              {isVI ? 'Đồng bộ Cloud đa thiết bị' : 'Multi-Device Cloud Sync'}
+              {isVI ? 'Đồng bộ Cloud & Dữ liệu' : 'Cloud Sync & Data'}
             </h3>
             <p className="text-xs text-slate-500 font-medium">
               {isVI ? 'Đồng bộ nhật ký & profile giữa Máy tính & Điện thoại' : 'Sync logs & profile across all your devices'}
@@ -381,7 +382,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {isVI ? 'Chưa bật Đồng bộ Cloud' : 'Cloud Sync Not Active'}
             </p>
             <p className="text-[11px] text-slate-400 mt-0.5">
-              {isVI ? 'Tạo mã 6 số mới hoặc quét QR để đồng bộ' : 'Generate 6-digit code or scan QR to sync'}
+              {isVI ? 'Tạo mã 6 số mới hoặc nhập mã để đồng bộ' : 'Generate 6-digit code or enter code to sync'}
             </p>
           </div>
         )}
@@ -431,38 +432,66 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             <div className="flex gap-2">
               <input
                 type="text"
-                placeholder="VD: 686-888"
                 value={inputCode}
                 onChange={e => setInputCode(e.target.value)}
-                className="flex-1 bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-xs font-mono font-bold text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500 text-center tracking-wider"
+                placeholder={isVI ? 'VD: 115-628 hoặc dán link...' : 'e.g. 115-628 or paste link...'}
+                className="flex-1 px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none font-mono"
               />
               <button
                 type="submit"
                 disabled={isConnecting || !inputCode.trim()}
-                className="bg-slate-800 hover:bg-slate-900 disabled:opacity-50 text-white text-xs font-bold px-4 rounded-xl transition flex items-center gap-1 active:scale-95"
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white font-bold rounded-xl text-xs transition disabled:opacity-50 flex items-center gap-1"
               >
-                {isConnecting ? (
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <>
-                    <span>{isVI ? 'Kết nối' : 'Connect'}</span>
-                    <ArrowRight className="w-3.5 h-3.5" />
-                  </>
-                )}
+                {isConnecting ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <ArrowRight className="w-3.5 h-3.5" />}
+                <span>{isVI ? 'Kết nối' : 'Connect'}</span>
               </button>
             </div>
           </form>
 
-          {/* Instant Sync Tip Box */}
-          <div className="p-3 bg-teal-50 border border-teal-200/80 rounded-2xl text-left space-y-1">
-            <p className="text-[11px] font-extrabold text-teal-800 flex items-center gap-1">
-              ⚡ {isVI ? 'Mẹo đồng bộ tức thì 1-Click sang Máy tính:' : 'Instant 1-Click Sync Tip:'}
-            </p>
-            <p className="text-[11px] font-medium text-teal-700 leading-relaxed">
-              {isVI
-                ? 'Trên Điện thoại, bấm nút Sync ở góc trên -> chọn "Chép Link" -> Mở Link đó trên Máy tính là 100% dữ liệu tự động bay sang ngay lập tức!'
-                : 'On Phone, click Sync -> Copy Link -> Open that link on Computer to import 100% data instantly!'}
-            </p>
+          {/* Backup / Restore via File Option (100% Reliable & Fast) */}
+          <div className="pt-3 border-t border-slate-200 mt-4 space-y-2">
+            <span className="block text-xs font-black text-slate-700 uppercase tracking-wider">
+              {isVI ? '📁 Cách mới: Tải File Dữ Liệu (100% Không Lỗi)' : '📁 Backup / Restore via File (100% Offline)'}
+            </span>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => exportFullBackup(logs, profile)}
+                className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition active:scale-95"
+              >
+                <Download className="w-4 h-4 text-emerald-600" />
+                <span>{isVI ? 'Tải File Dữ Liệu (.json)' : 'Export File (.json)'}</span>
+              </button>
+
+              <label className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-teal-50 hover:bg-teal-100 text-teal-800 border border-teal-300 rounded-xl text-xs font-bold transition active:scale-95 cursor-pointer">
+                <Upload className="w-4 h-4 text-teal-600" />
+                <span>{isVI ? 'Nhập File Dữ Liệu' : 'Import File'}</span>
+                <input
+                  type="file"
+                  accept=".json"
+                  className="hidden"
+                  onChange={e => {
+                    const file = e.target.files?.[0];
+                    if (file) {
+                      const reader = new FileReader();
+                      reader.onload = event => {
+                        const content = event.target?.result as string;
+                        if (content) {
+                          const imported = importFullBackup(content);
+                          if (imported && imported.logs && imported.logs.length > 0) {
+                            onConnectSync(syncCode || 'FILE-SYNC', { logs: imported.logs, profile: imported.profile || profile });
+                            onClose();
+                          } else {
+                            setErrorMsg(isVI ? 'File JSON không hợp lệ!' : 'Invalid JSON file!');
+                          }
+                        }
+                      };
+                      reader.readAsText(file);
+                    }
+                  }}
+                />
+              </label>
+            </div>
           </div>
         </div>
       </div>
