@@ -29,6 +29,7 @@ import {
   getStoredSyncCode,
   saveSyncCode,
   clearSyncCode,
+  saveSyncToken,
   getLastSyncTime,
   saveLastSyncTime,
 } from './utils/storageUtils';
@@ -40,7 +41,7 @@ import {
   pushDataToCloud,
   subscribeToCloudSync,
   fetchCloudData,
-  syncOnStartup,
+  reconcileWithCloud,
   decodeDataFromBase64,
   decodeDataFromBase64Async,
   formatDisplayCode,
@@ -80,7 +81,7 @@ export function App() {
 
   const t = getTranslation(language);
 
-  // 1. Initial Startup Flow: Read local storage first, then run conflict-safe sync if syncCode is set
+  // 1. Initial Startup Flow: Read local storage first, then run canonical reconciliation if syncCode is set
   useEffect(() => {
     const loadedLogs = getStoredLogs();
     const storedProfile = getStoredProfile();
@@ -91,7 +92,7 @@ export function App() {
     const currentSyncCode = getStoredSyncCode();
     if (currentSyncCode) {
       setSyncStatus('syncing');
-      syncOnStartup(currentSyncCode, getAllStoredLogsWithTombstones(), storedProfile).then(result => {
+      reconcileWithCloud(currentSyncCode, getAllStoredLogsWithTombstones(), storedProfile).then(result => {
         setLogs(result.logs);
         setProfile(result.profile);
         setSyncStatus(result.status);
@@ -108,23 +109,15 @@ export function App() {
     }
   }, []);
 
-  // 2. Realtime Background Sync Subscription: Listen for remote changes when active tab or on reconnect
+  // 2. Realtime Background Sync Subscription with Reconciliation
   useEffect(() => {
     if (!syncCode) return;
 
-    const unsubscribe = subscribeToCloudSync(syncCode, remoteData => {
-      if (remoteData && remoteData.logs) {
-        const currentLocal = getAllStoredLogsWithTombstones();
-        const mergedLogs = mergeLogsConflictSafe(currentLocal, remoteData.logs);
-        const currentProfile = getStoredProfile();
-        const mergedProfile = mergeProfilesConflictSafe(currentProfile, remoteData.profile);
-
-        saveLogsWithTombstones(mergedLogs);
-        saveProfile(mergedProfile);
-
-        setLogs(mergedLogs.filter(l => !l.deletedAt));
-        setProfile(mergedProfile);
-        setSyncStatus('synced');
+    const unsubscribe = subscribeToCloudSync(syncCode, result => {
+      setLogs(result.logs);
+      setProfile(result.profile);
+      setSyncStatus(result.status);
+      if (result.status === 'synced') {
         const nowIso = new Date().toISOString();
         setLastSyncTime(nowIso);
         saveLastSyncTime(nowIso);
@@ -134,12 +127,17 @@ export function App() {
     return () => unsubscribe();
   }, [syncCode]);
 
-  // 3. Check URL query string for direct 1-click sync link (?sync=XXX-XXX&d=PAYLOAD)
+  // 3. Check URL query string for direct 1-click sync link (?sync=XXX-XXX&token=...&d=PAYLOAD)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
       const querySync = params.get('sync');
+      const queryToken = params.get('token');
       const queryData = params.get('data') || params.get('d');
+
+      if (queryToken) {
+        saveSyncToken(queryToken);
+      }
 
       if (queryData) {
         const decoded = decodeDataFromBase64(queryData);
@@ -158,7 +156,7 @@ export function App() {
             const clean = formatDisplayCode(querySync);
             saveSyncCode(clean);
             setSyncCode(clean);
-            pushDataToCloud(clean, mergedLogs, mergedProf);
+            pushDataToCloud(clean, mergedLogs, mergedProf, queryToken || undefined);
           }
           showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
           window.history.replaceState({}, '', window.location.pathname);
@@ -181,7 +179,7 @@ export function App() {
               const clean = formatDisplayCode(querySync);
               saveSyncCode(clean);
               setSyncCode(clean);
-              pushDataToCloud(clean, mergedLogs, mergedProf);
+              pushDataToCloud(clean, mergedLogs, mergedProf, queryToken || undefined);
             }
             showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
             window.history.replaceState({}, '', window.location.pathname);
@@ -195,7 +193,7 @@ export function App() {
         saveSyncCode(clean);
         setSyncCode(clean);
         setSyncStatus('syncing');
-        syncOnStartup(clean, getAllStoredLogsWithTombstones(), getStoredProfile()).then(result => {
+        reconcileWithCloud(clean, getAllStoredLogsWithTombstones(), getStoredProfile(), queryToken || undefined).then(result => {
           setLogs(result.logs);
           setProfile(result.profile);
           setSyncStatus(result.status);
@@ -278,13 +276,20 @@ export function App() {
     }
   };
 
-  const handleImportLogs = (imported: DailyLog[]) => {
+  const handleImportLogs = (imported: DailyLog[], importedProfile?: UserProfile) => {
     const allStored = getAllStoredLogsWithTombstones();
     const merged = mergeLogsConflictSafe(allStored, imported);
     saveLogsWithTombstones(merged);
     setLogs(merged.filter(l => !l.deletedAt));
+
+    if (importedProfile) {
+      const mergedProf = mergeProfilesConflictSafe(profile, importedProfile);
+      saveProfile(mergedProf);
+      setProfile(mergedProf);
+    }
+
     if (syncCode) {
-      pushDataToCloud(syncCode, merged, profile);
+      pushDataToCloud(syncCode, merged, importedProfile || profile);
     }
   };
 
@@ -342,7 +347,7 @@ export function App() {
       });
     } else {
       setSyncStatus('syncing');
-      syncOnStartup(code, getAllStoredLogsWithTombstones(), getStoredProfile()).then(result => {
+      reconcileWithCloud(code, getAllStoredLogsWithTombstones(), getStoredProfile()).then(result => {
         setLogs(result.logs);
         setProfile(result.profile);
         setSyncStatus(result.status);

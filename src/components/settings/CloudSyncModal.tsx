@@ -3,17 +3,19 @@ import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldC
 import { QRCodeSVG } from 'qrcode.react';
 import { Language, DailyLog, UserProfile, SyncStatus } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
-import { exportFullBackup, importFullBackup, getAllStoredLogsWithTombstones } from '../../utils/storageUtils';
+import { exportFullBackup, importFullBackup, getAllStoredLogsWithTombstones, getStoredSyncToken, saveSyncToken, saveLogsWithTombstones, saveProfile } from '../../utils/storageUtils';
 import {
   generateNumericSyncCode,
   formatDisplayCode,
   normalizeSyncCode,
   pushDataToCloud,
   fetchCloudData,
+  reconcileWithCloud,
   encodeDataToBase64,
   decodeDataFromBase64,
   decodeDataFromBase64Async,
 } from '../../services/cloudSyncService';
+import { generateSecureToken } from '../../utils/syncEngine';
 
 export function copyToClipboard(text: string): boolean {
   if (!text) return false;
@@ -101,8 +103,9 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   const isVI = language === 'vi';
   const displayCode = formatDisplayCode(syncCode);
+  const syncToken = getStoredSyncToken();
   const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const cleanUrl = displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl;
+  const cleanUrl = displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}&token=${encodeURIComponent(syncToken)}` : currentUrl;
 
   if (!isOpen) return null;
 
@@ -130,7 +133,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
         setPushed(true);
         setTimeout(() => setPushed(false), 2500);
       } else {
-        setErrorMsg(isVI ? 'Lỗi kết nối máy chủ Cloud. Vui lòng kiểm tra lại mạng.' : 'Cloud connection failed. Please check network.');
+        setErrorMsg(res.error || (isVI ? 'Lỗi kết nối máy chủ Cloud. Vui lòng kiểm tra lại mạng.' : 'Cloud connection failed. Please check network.'));
       }
     } catch (err: any) {
       setIsConnecting(false);
@@ -143,14 +146,15 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     setIsConnecting(true);
     setErrorMsg('');
     try {
-      const remoteData = await fetchCloudData(syncCode);
+      const allLogs = getAllStoredLogsWithTombstones();
+      const res = await reconcileWithCloud(syncCode, allLogs, profile);
       setIsConnecting(false);
-      if (remoteData && remoteData.logs && remoteData.logs.length > 0) {
-        onConnectSync(syncCode, { logs: remoteData.logs, profile: remoteData.profile || profile });
+      if (res.status === 'synced' || res.logs.length > 0) {
+        onConnectSync(syncCode, { logs: res.logs, profile: res.profile });
         setPulled(true);
         setTimeout(() => setPulled(false), 2500);
       } else {
-        setErrorMsg(isVI ? 'Chưa tìm thấy dữ liệu mới trên Cloud cho mã 6 số này.' : 'No Cloud data found for this 6-digit code.');
+        setErrorMsg(res.error || (isVI ? 'Chưa tìm thấy dữ liệu mới trên Cloud cho mã kết nối này.' : 'No Cloud data found for this sync code.'));
       }
     } catch (err: any) {
       setIsConnecting(false);
@@ -162,14 +166,17 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     setIsConnecting(true);
     setErrorMsg('');
     const newCode = generateNumericSyncCode();
+    const newToken = generateSecureToken();
+    saveSyncToken(newToken);
+
     try {
       const allLogs = getAllStoredLogsWithTombstones();
-      const res = await pushDataToCloud(newCode, allLogs, profile);
+      const res = await pushDataToCloud(newCode, allLogs, profile, newToken);
       setIsConnecting(false);
       if (res.success) {
         onConnectSync(newCode);
       } else {
-        setErrorMsg(isVI ? 'Không thể tạo mã kết nối Cloud. Vui lòng kiểm tra mạng.' : 'Failed to generate sync code.');
+        setErrorMsg(res.error || (isVI ? 'Không thể tạo mã kết nối Cloud. Vui lòng kiểm tra mạng.' : 'Failed to generate sync code.'));
       }
     } catch (err: any) {
       setIsConnecting(false);
@@ -184,70 +191,66 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
     setErrorMsg('');
 
-    // 1. If user pasted a full URL or direct sync link (?d= or ?data=)
-    if (trimmed.includes('d=') || trimmed.includes('data=')) {
+    // 1. If user pasted a full URL or direct sync link
+    let extractedCode = '';
+    let extractedToken = '';
+
+    if (trimmed.includes('http') || trimmed.includes('?')) {
       try {
         const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://example.com/${trimmed}`);
+        extractedCode = urlObj.searchParams.get('sync') || '';
+        extractedToken = urlObj.searchParams.get('token') || '';
+
         const dataParam = urlObj.searchParams.get('d') || urlObj.searchParams.get('data');
-        const syncParam = urlObj.searchParams.get('sync');
         if (dataParam) {
           const decoded = decodeDataFromBase64(dataParam);
           if (decoded && decoded.logs && decoded.logs.length > 0) {
-            onConnectSync(syncParam ? formatDisplayCode(syncParam) : (syncCode || '115-628'), {
-              logs: decoded.logs,
-              profile: decoded.profile || profile,
-            });
-            setInputCode('');
-            return;
-          }
-          const asyncDecoded = await decodeDataFromBase64Async(dataParam);
-          if (asyncDecoded && asyncDecoded.logs && asyncDecoded.logs.length > 0) {
-            onConnectSync(syncParam ? formatDisplayCode(syncParam) : (syncCode || '115-628'), {
-              logs: asyncDecoded.logs,
-              profile: asyncDecoded.profile || profile,
-            });
+            if (extractedToken) saveSyncToken(extractedToken);
+            if (extractedCode) {
+              onConnectSync(formatDisplayCode(extractedCode), {
+                logs: decoded.logs,
+                profile: decoded.profile || profile,
+              });
+            } else if (syncCode) {
+              onConnectSync(syncCode, {
+                logs: decoded.logs,
+                profile: decoded.profile || profile,
+              });
+            } else {
+              saveLogsWithTombstones(decoded.logs);
+              if (decoded.profile) saveProfile(decoded.profile);
+            }
             setInputCode('');
             return;
           }
         }
-      } catch (err) {
-        console.warn('Direct URL sync decode error:', err);
-      }
-    }
-
-    // 2. Extract 6-digit code if user pasted a sync URL (e.g. ?sync=115-628) or raw code (115-628)
-    let codeStr = trimmed;
-    if (trimmed.includes('sync=')) {
-      try {
-        const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://example.com/${trimmed}`);
-        codeStr = urlObj.searchParams.get('sync') || trimmed;
       } catch {}
     }
 
-    const cleanDigits = normalizeSyncCode(codeStr);
+    const codeToUse = extractedCode || trimmed;
+    const cleanDigits = normalizeSyncCode(codeToUse);
+
     if (!cleanDigits || cleanDigits.length < 4) {
-      setErrorMsg(isVI ? 'Vui lòng nhập mã kết nối hợp lệ (ví dụ: 115-628) hoặc dán link.' : 'Please enter a valid sync code (e.g. 115-628) or paste link.');
+      setErrorMsg(isVI ? 'Vui lòng nhập mã kết nối hợp lệ (ví dụ: 686-888) hoặc dán link đồng bộ.' : 'Please enter a valid sync code (e.g. 686-888) or paste sync link.');
       return;
+    }
+
+    if (extractedToken) {
+      saveSyncToken(extractedToken);
     }
 
     const formattedCode = formatDisplayCode(cleanDigits);
     setIsConnecting(true);
 
     try {
-      const remoteData = await fetchCloudData(cleanDigits);
+      const allLogs = getAllStoredLogsWithTombstones();
+      const res = await reconcileWithCloud(cleanDigits, allLogs, profile, extractedToken || undefined);
       setIsConnecting(false);
-      if (remoteData && remoteData.logs && remoteData.logs.length > 0) {
-        onConnectSync(formattedCode, { logs: remoteData.logs, profile: remoteData.profile || profile });
+      if (res.status === 'synced' || res.logs.length > 0) {
+        onConnectSync(formattedCode, { logs: res.logs, profile: res.profile });
         setInputCode('');
       } else {
-        const allLogs = getAllStoredLogsWithTombstones();
-        const res = await pushDataToCloud(cleanDigits, allLogs, profile);
-        if (res.success) {
-          onConnectSync(formattedCode);
-          setInputCode('');
-        } else {
-          setErrorMsg(isVI ? 'Không tìm thấy dữ liệu cho mã kết nối này.' : 'No data found for this code.');
-        }
+        setErrorMsg(res.error || (isVI ? 'Không thể kết nối với mã này.' : 'Failed to connect with this code.'));
       }
     } catch (err: any) {
       setIsConnecting(false);
@@ -441,7 +444,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                     ) : (
                       <>
                         <Link className="w-4 h-4 text-teal-400" />
-                        <span>{isVI ? '🔗 Copy Link Đồng Bộ (1-Click)' : '🔗 Copy Sync Link (1-Click)'}</span>
+                        <span>{isVI ? '🔗 Copy Link Đồng Bộ (Kèm Token)' : '🔗 Copy Sync Link (With Token)'}</span>
                       </>
                     )}
                   </button>
@@ -533,7 +536,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 type="text"
                 value={inputCode}
                 onChange={e => setInputCode(e.target.value)}
-                placeholder={isVI ? 'VD: 115-628 hoặc dán link' : 'e.g. 115-628 or paste link'}
+                placeholder={isVI ? 'VD: 686-888 hoặc dán link' : 'e.g. 686-888 or paste link'}
                 className="flex-1 px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none font-mono"
               />
               <button
@@ -578,7 +581,12 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                         if (content) {
                           const imported = importFullBackup(content);
                           if (imported && imported.logs && imported.logs.length > 0) {
-                            onConnectSync(syncCode || 'FILE-SYNC', { logs: imported.logs, profile: imported.profile || profile });
+                            if (syncCode) {
+                              onConnectSync(syncCode, { logs: imported.logs, profile: imported.profile || profile });
+                            } else {
+                              saveLogsWithTombstones(imported.logs);
+                              if (imported.profile) saveProfile(imported.profile);
+                            }
                             onClose();
                           } else {
                             setErrorMsg(isVI ? 'File JSON không hợp lệ!' : 'Invalid JSON file!');

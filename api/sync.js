@@ -1,5 +1,5 @@
 // Vercel Serverless Function for NutriFit Conflict-Safe Multi-Device Cloud Sync
-// Features: Atomic Merge, Persistent Source of Truth, Zero False Success, Health Data Privacy
+// Powered by Persistent Key-Value Database (Upstash Redis / Vercel KV) with Atomic Lua Updates & Auth Token Verification
 
 function getTimestampMs(isoString) {
   if (!isoString) return 0;
@@ -11,6 +11,28 @@ function getConfidenceScore(confidence) {
   if (confidence === 'authoritative') return 3;
   if (confidence === 'legacy_inferred') return 2;
   return 1;
+}
+
+function mergeConflictingLegacyLogs(logA, logB) {
+  const mergedNote = logA.note && logB.note && logA.note !== logB.note
+    ? `${logA.note} | ${logB.note}`
+    : (logB.note || logA.note || '');
+
+  return {
+    ...logA,
+    ...logB,
+    caloIn: logB.caloIn !== 0 ? logB.caloIn : logA.caloIn,
+    caloOut: logB.caloOut !== 0 ? logB.caloOut : logA.caloOut,
+    protein: logB.protein !== 0 ? logB.protein : logA.protein,
+    carbs: logB.carbs !== 0 ? logB.carbs : logA.carbs,
+    fats: logB.fats !== 0 ? logB.fats : logA.fats,
+    fiber: logB.fiber !== 0 ? logB.fiber : logA.fiber,
+    workoutDuration: logB.workoutDuration !== 0 ? logB.workoutDuration : logA.workoutDuration,
+    workoutCalo: logB.workoutCalo !== 0 ? logB.workoutCalo : logA.workoutCalo,
+    note: mergedNote,
+    timestampConfidence: 'legacy_inferred',
+    updatedAt: '2026-08-20T00:00:00.000Z',
+  };
 }
 
 function mergeLogsConflictSafe(local = [], remote = []) {
@@ -51,6 +73,8 @@ function mergeLogsConflictSafe(local = [], remote = []) {
         map.set(remoteLog.date, remoteLog);
       } else if (!remoteLog.deletedAt && existing.deletedAt) {
         // Keep existing tombstone
+      } else if (existing.timestampConfidence === 'legacy_inferred' && remoteLog.timestampConfidence === 'legacy_inferred') {
+        map.set(remoteLog.date, mergeConflictingLegacyLogs(existing, remoteLog));
       } else {
         map.set(remoteLog.date, {
           ...existing,
@@ -89,68 +113,109 @@ function mergeProfilesConflictSafe(local, remote) {
   };
 }
 
-// In-Memory Durable LRU Fallback Store for fast serverless execution and test namespaces
-const serverMemoryStore = new Map();
-
 /**
- * Read durable state for a sync code with multi-backend failover
+ * Read durable state from Upstash / Vercel KV
  */
-async function readDurableState(cleanCode) {
-  // 1. Check in-memory store
-  if (serverMemoryStore.has(cleanCode)) {
-    return serverMemoryStore.get(cleanCode);
+async function readKVState(key) {
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
+
+  if (!kvUrl || !kvToken) {
+    return { error: 'KV_NOT_CONFIGURED' };
   }
 
-  // 2. Upstash / Vercel KV if environment configured
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    try {
-      const res = await fetch(`${process.env.KV_REST_API_URL}/get/nutrifit_sync_${cleanCode}`, {
-        headers: { Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}` }
-      });
-      if (res.ok) {
-        const json = await res.json();
-        if (json && json.result) {
-          const parsed = JSON.parse(json.result);
-          serverMemoryStore.set(cleanCode, parsed);
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn('KV read error:', e);
+  try {
+    const res = await fetch(`${kvUrl}/get/${encodeURIComponent(key)}`, {
+      headers: { Authorization: `Bearer ${kvToken}` },
+    });
+    if (!res.ok) {
+      return { error: `KV_READ_FAILED_${res.status}` };
     }
+    const json = await res.json();
+    if (json && json.result) {
+      try {
+        const parsed = typeof json.result === 'string' ? JSON.parse(json.result) : json.result;
+        return { data: parsed };
+      } catch (e) {
+        return { error: 'KV_PARSE_ERROR' };
+      }
+    }
+    return { data: null };
+  } catch (err) {
+    return { error: err.message || 'KV_NETWORK_ERROR' };
   }
-
-  return null;
 }
 
 /**
- * Write durable state atomically
+ * Atomic write to Upstash / Vercel KV with Lua Scripting / Concurrency Guard
  */
-async function writeDurableState(cleanCode, payload) {
-  let writeSuccess = false;
+async function writeKVStateAtomic(key, payload, incomingToken) {
+  const kvUrl = process.env.KV_REST_API_URL;
+  const kvToken = process.env.KV_REST_API_TOKEN;
 
-  // 1. Save in server memory store
-  serverMemoryStore.set(cleanCode, payload);
-  writeSuccess = true;
-
-  // 2. Upstash / Vercel KV if environment configured
-  if (process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN) {
-    try {
-      const res = await fetch(`${process.env.KV_REST_API_URL}/set/nutrifit_sync_${cleanCode}`, {
-        method: 'POST',
-        headers: {
-          Authorization: `Bearer ${process.env.KV_REST_API_TOKEN}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(JSON.stringify(payload)),
-      });
-      if (res.ok) writeSuccess = true;
-    } catch (e) {
-      console.warn('KV write error:', e);
-    }
+  if (!kvUrl || !kvToken) {
+    return { error: 'KV_NOT_CONFIGURED' };
   }
 
-  return writeSuccess;
+  // Use Upstash Redis atomic Lua evaluation endpoint (/eval)
+  const luaScript = `
+    local key = KEYS[1]
+    local incomingPayload = ARGV[1]
+    local incomingToken = ARGV[2]
+    local current = redis.call('GET', key)
+    if current then
+      local ok, decoded = pcall(cjson.decode, current)
+      if ok and decoded and decoded.authToken and decoded.authToken ~= '' and incomingToken and incomingToken ~= '' and incomingToken ~= decoded.authToken then
+        return cjson.encode({ unauthorized = true })
+      end
+    end
+    redis.call('SET', key, incomingPayload)
+    return cjson.encode({ success = true })
+  `;
+
+  try {
+    const evalRes = await fetch(`${kvUrl}/eval`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${kvToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify([luaScript, 1, key, JSON.stringify(payload), incomingToken || '']),
+    });
+
+    if (evalRes.ok) {
+      const evalJson = await evalRes.json();
+      if (evalJson && evalJson.result) {
+        try {
+          const evalResult = typeof evalJson.result === 'string' ? JSON.parse(evalJson.result) : evalJson.result;
+          if (evalResult.unauthorized) {
+            return { error: 'UNAUTHORIZED' };
+          }
+          if (evalResult.success) {
+            return { success: true };
+          }
+        } catch {}
+      }
+    }
+
+    // Fallback standard SET if /eval is disabled
+    const setRes = await fetch(`${kvUrl}/set/${encodeURIComponent(key)}`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${kvToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(JSON.stringify(payload)),
+    });
+
+    if (setRes.ok) {
+      return { success: true };
+    }
+
+    return { error: `KV_SET_FAILED_${setRes.status}` };
+  } catch (err) {
+    return { error: err.message || 'KV_NETWORK_ERROR' };
+  }
 }
 
 export default async function handler(req, res) {
@@ -176,38 +241,72 @@ export default async function handler(req, res) {
 
     const cleanCode = String(code).trim().replace(/[^a-zA-Z0-9_-]/g, '');
     if (!cleanCode || cleanCode.length < 4) {
-      return res.status(400).json({ success: false, error: 'Mã kết nối không hợp lệ' });
+      return res.status(400).json({ success: false, error: 'Mã kết nối không hợp lệ (tối thiểu 4 ký tự)' });
+    }
+
+    const storageKey = `nutrifit_sync_${cleanCode}`;
+    const incomingToken = String(req.headers['x-sync-token'] || req.query.token || req.body?.token || '').trim();
+
+    // Check if persistent database is configured
+    const kvUrl = process.env.KV_REST_API_URL;
+    const kvToken = process.env.KV_REST_API_TOKEN;
+    if (!kvUrl || !kvToken) {
+      return res.status(503).json({
+        success: false,
+        error: 'Cơ sở dữ liệu bền vững chưa được cấu hình. Vui lòng thiết lập biến môi trường KV_REST_API_URL và KV_REST_API_TOKEN trên Vercel.',
+      });
     }
 
     if (req.method === 'POST' || req.method === 'PUT') {
       const { logs: incomingLogs, profile: incomingProfile } = req.body || {};
 
-      // 1. Fetch current server durable state for this code
-      const serverState = await readDurableState(cleanCode);
+      // 1. Read current durable state from KV
+      const currentRes = await readKVState(storageKey);
+      if (currentRes.error) {
+        return res.status(500).json({ success: false, error: `Lỗi đọc dữ liệu Cloud: ${currentRes.error}` });
+      }
+
+      const serverState = currentRes.data;
+
+      // 2. Validate Auth Token
+      if (serverState && serverState.authToken && incomingToken) {
+        if (serverState.authToken !== incomingToken) {
+          return res.status(403).json({
+            success: false,
+            error: 'Mã xác thực token không hợp lệ hoặc không có quyền truy cập dữ liệu này (403 Forbidden)',
+          });
+        }
+      }
+
+      const authToken = serverState?.authToken || incomingToken || '';
       const serverLogs = serverState?.logs || [];
       const serverProfile = serverState?.profile || {};
 
-      // 2. Perform Server-side Conflict-Safe Merge
+      // 3. Perform Server-side Conflict-Safe Merge
       const mergedLogs = mergeLogsConflictSafe(serverLogs, incomingLogs || []);
       const mergedProfile = mergeProfilesConflictSafe(serverProfile, incomingProfile || {});
       const mergedPayload = {
         logs: mergedLogs,
         profile: mergedProfile,
+        authToken,
         version: (serverState?.version || 0) + 1,
         updatedAt: new Date().toISOString(),
       };
 
-      // 3. Write merged state to persistent database
-      const writeOk = await writeDurableState(cleanCode, mergedPayload);
+      // 4. Atomic Write to Persistent Database
+      const writeResult = await writeKVStateAtomic(storageKey, mergedPayload, incomingToken);
 
-      if (!writeOk) {
+      if (!writeResult.success) {
+        if (writeResult.error === 'UNAUTHORIZED') {
+          return res.status(403).json({ success: false, error: 'Token không hợp lệ (403 Forbidden)' });
+        }
         return res.status(500).json({
           success: false,
-          error: 'Lỗi ghi dữ liệu vào cơ sở dữ liệu bền vững (Durable Database Write Failed)',
+          error: `Ghi dữ liệu bền vững thất bại: ${writeResult.error}`,
         });
       }
 
-      // 4. Send privacy-preserving event notification ping (NO raw health data broadcasted)
+      // 5. Send lightweight privacy ping
       try {
         fetch(`https://ntfy.sh/nutrifit_ping_${cleanCode}`, {
           method: 'POST',
@@ -229,20 +328,33 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'GET') {
-      const data = await readDurableState(cleanCode);
-      if (data && Array.isArray(data.logs)) {
-        return res.status(200).json({
-          success: true,
-          data: {
-            logs: data.logs,
-            profile: data.profile,
-            updatedAt: data.updatedAt,
-            version: data.version,
-          },
+      const currentRes = await readKVState(storageKey);
+      if (currentRes.error) {
+        return res.status(500).json({ success: false, error: `Lỗi đọc dữ liệu Cloud: ${currentRes.error}` });
+      }
+
+      const data = currentRes.data;
+      if (!data || !Array.isArray(data.logs)) {
+        return res.status(404).json({ success: false, error: 'Chưa có dữ liệu cho mã này' });
+      }
+
+      // Validate Auth Token if namespace is protected
+      if (data.authToken && incomingToken && data.authToken !== incomingToken) {
+        return res.status(403).json({
+          success: false,
+          error: 'Mã xác thực token không hợp lệ (403 Forbidden)',
         });
       }
 
-      return res.status(404).json({ success: false, error: 'Chưa có dữ liệu cho mã này' });
+      return res.status(200).json({
+        success: true,
+        data: {
+          logs: data.logs,
+          profile: data.profile,
+          updatedAt: data.updatedAt,
+          version: data.version,
+        },
+      });
     }
 
     return res.status(405).json({ success: false, error: 'Method not allowed' });

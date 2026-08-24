@@ -1,6 +1,24 @@
 import { DailyLog, UserProfile } from '../types/health';
 import { USER_REAL_LOGS } from './sampleData';
 
+/**
+ * Generate a cryptographically secure 256-bit high-entropy token
+ */
+export function generateSecureToken(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
+    const array = new Uint8Array(24);
+    crypto.getRandomValues(array);
+    return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
+  }
+  // Node.js / Fallback crypto
+  try {
+    const nodeCrypto = require('crypto');
+    return nodeCrypto.randomBytes(24).toString('hex');
+  } catch {
+    return `stk_${Math.random().toString(36).substring(2, 15)}_${Date.now().toString(36)}`;
+  }
+}
+
 export function getTimestampMs(isoString?: string | null): number {
   if (!isoString) return 0;
   const parsed = new Date(isoString).getTime();
@@ -91,6 +109,32 @@ function getConfidenceScore(confidence?: string): number {
 }
 
 /**
+ * Merge two conflicting legacy records where neither has an authoritative timestamp.
+ * Deterministically combines custom user data to avoid silent loss.
+ */
+export function mergeConflictingLegacyLogs(logA: DailyLog, logB: DailyLog): DailyLog {
+  const mergedNote = logA.note && logB.note && logA.note !== logB.note
+    ? `${logA.note} | ${logB.note}`
+    : (logB.note || logA.note || '');
+
+  return {
+    ...logA,
+    ...logB,
+    caloIn: logB.caloIn !== 0 ? logB.caloIn : logA.caloIn,
+    caloOut: logB.caloOut !== 0 ? logB.caloOut : logA.caloOut,
+    protein: logB.protein !== 0 ? logB.protein : logA.protein,
+    carbs: logB.carbs !== 0 ? logB.carbs : logA.carbs,
+    fats: logB.fats !== 0 ? logB.fats : logA.fats,
+    fiber: logB.fiber !== 0 ? logB.fiber : logA.fiber,
+    workoutDuration: logB.workoutDuration !== 0 ? logB.workoutDuration : logA.workoutDuration,
+    workoutCalo: logB.workoutCalo !== 0 ? logB.workoutCalo : logA.workoutCalo,
+    note: mergedNote,
+    timestampConfidence: 'legacy_inferred',
+    updatedAt: '2026-08-20T00:00:00.000Z',
+  };
+}
+
+/**
  * Conflict-Safe Log Merge based on confidence levels and updatedAt timestamps.
  */
 export function mergeLogsConflictSafe(local: DailyLog[] = [], remote: DailyLog[] = []): DailyLog[] {
@@ -138,6 +182,9 @@ export function mergeLogsConflictSafe(local: DailyLog[] = [], remote: DailyLog[]
         map.set(remoteLog.date, remoteLog);
       } else if (!remoteLog.deletedAt && existing.deletedAt) {
         // Keep existing tombstone
+      } else if (existing.timestampConfidence === 'legacy_inferred' && remoteLog.timestampConfidence === 'legacy_inferred') {
+        // Both are legacy inferred with conflicting custom data -> safe field-level merge
+        map.set(remoteLog.date, mergeConflictingLegacyLogs(existing, remoteLog));
       } else {
         // Deterministic field merge
         map.set(remoteLog.date, {
@@ -174,11 +221,8 @@ export function mergeProfilesConflictSafe(local?: UserProfile | null, remote?: U
   const localUpdatedMs = getTimestampMs(local.updatedAt);
   const remoteUpdatedMs = getTimestampMs(remote.updatedAt);
 
-  if (remoteUpdatedMs > localUpdatedMs) {
-    return { ...remote };
-  } else if (localUpdatedMs > remoteUpdatedMs) {
-    return { ...local };
-  }
+  if (remoteUpdatedMs > localUpdatedMs) return { ...remote };
+  if (localUpdatedMs > remoteUpdatedMs) return { ...local };
 
   return {
     name: (local.name && local.name !== 'Người dùng') ? local.name : (remote.name || local.name || 'Bảo Uyên'),

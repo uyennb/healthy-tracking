@@ -4,15 +4,19 @@ import {
   saveProfile,
   saveLastSyncTime,
   getStoredSyncToken,
+  saveSyncToken,
+  getAllStoredLogsWithTombstones,
+  getStoredProfile,
 } from '../utils/storageUtils';
 import {
   mergeLogsConflictSafe,
   mergeProfilesConflictSafe,
   sanitizeLog,
   getTimestampMs,
+  generateSecureToken,
 } from '../utils/syncEngine';
 
-export { mergeLogsConflictSafe, mergeProfilesConflictSafe };
+export { mergeLogsConflictSafe, mergeProfilesConflictSafe, generateSecureToken };
 
 export interface CloudSyncPayload {
   logs: DailyLog[];
@@ -27,21 +31,16 @@ export interface SyncPushResult {
     logs: DailyLog[];
     profile: UserProfile;
     updatedAt: string;
+    version?: number;
   };
   error?: string;
 }
 
-/**
- * Clean & normalize a 6-digit numeric sync code (e.g. "686-888" -> "686888")
- */
 export function normalizeSyncCode(code: string): string {
   if (!code) return '';
   return code.trim().replace(/[^a-zA-Z0-9_-]/g, '');
 }
 
-/**
- * Format a 6-digit code for display (e.g. "686888" -> "686-888")
- */
 export function formatDisplayCode(code: string): string {
   const digits = normalizeSyncCode(code);
   if (digits.length === 6 && /^\d+$/.test(digits)) {
@@ -50,9 +49,6 @@ export function formatDisplayCode(code: string): string {
   return digits || code;
 }
 
-/**
- * Generate a random 6-digit numeric sync code (e.g. "686-888")
- */
 export function generateNumericSyncCode(): string {
   const num = Math.floor(100000 + Math.random() * 900000);
   return `${Math.floor(num / 1000)}-${num % 1000}`;
@@ -67,23 +63,24 @@ export function mergeProfiles(local: UserProfile, remote?: UserProfile): UserPro
 }
 
 /**
- * Push data to canonical persistent backend with server-side conflict resolution.
- * Returns success: true ONLY when persistent backend confirms durable write!
+ * Push data to canonical persistent database backend.
+ * Returns success: true ONLY when persistent backend confirms write!
  */
 export async function pushDataToCloud(
   syncCode: string,
   logs: DailyLog[],
-  profile: UserProfile
+  profile: UserProfile,
+  overrideToken?: string
 ): Promise<SyncPushResult> {
   const digits = normalizeSyncCode(syncCode);
   if (!digits) return { success: false, error: 'Mã kết nối không hợp lệ' };
 
   const sanitizedLogs = logs.map(l => sanitizeLog(l)).filter((l): l is DailyLog => l !== null);
-  const syncToken = getStoredSyncToken();
+  const syncToken = overrideToken || getStoredSyncToken();
 
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 7000);
+    const timer = setTimeout(() => controller.abort(), 8000);
 
     const res = await fetch(`/api/sync`, {
       method: 'POST',
@@ -95,6 +92,7 @@ export async function pushDataToCloud(
         code: digits,
         logs: sanitizedLogs,
         profile,
+        token: syncToken,
         updatedAt: new Date().toISOString(),
       }),
       signal: controller.signal,
@@ -117,31 +115,40 @@ export async function pushDataToCloud(
             logs: canonicalLogs,
             profile: canonicalProfile,
             updatedAt: json.data.updatedAt || new Date().toISOString(),
+            version: json.data.version,
           },
         };
       }
     }
 
-    return { success: false, error: 'Phản hồi từ máy chủ không hợp lệ' };
+    let errorDetail = 'Lỗi máy chủ khi đồng bộ';
+    try {
+      const errJson = await res.json();
+      if (errJson && errJson.error) errorDetail = errJson.error;
+    } catch {}
+
+    return { success: false, error: errorDetail };
   } catch (err: any) {
-    console.warn('Sync push error:', err);
+    console.warn('Sync push network error:', err);
     return { success: false, error: err?.message || 'Lỗi mạng khi kết nối máy chủ' };
   }
 }
 
 /**
- * Fetch remote state from canonical backend
+ * Fetch remote state from canonical persistent backend
  */
-export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload | null> {
+export async function fetchCloudData(syncCode: string, overrideToken?: string): Promise<CloudSyncPayload | null> {
   const digits = normalizeSyncCode(syncCode);
   if (!digits) return null;
+
+  const syncToken = overrideToken || getStoredSyncToken();
 
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6000);
 
-    const res = await fetch(`/api/sync?code=${encodeURIComponent(digits)}&t=${Date.now()}`, {
-      headers: { 'x-sync-token': getStoredSyncToken() },
+    const res = await fetch(`/api/sync?code=${encodeURIComponent(digits)}&token=${encodeURIComponent(syncToken)}&t=${Date.now()}`, {
+      headers: { 'x-sync-token': syncToken },
       signal: controller.signal,
     });
     clearTimeout(timer);
@@ -166,15 +173,16 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
 }
 
 /**
- * Startup 2-way Synchronization:
- * Reads remote state first, merges conflict-safe without destroying local newer edits,
- * and pushes back to cloud only if local has newer records or profile.
+ * Centralized Canonical Reconciliation Function:
+ * Used identically for startup, background polling, visibility reconnect, and manual sync.
+ * Reconciles local and remote state, pushes local newer edits, and only sets 'synced' on confirmed durable write!
  */
-export async function syncOnStartup(
+export async function reconcileWithCloud(
   syncCode: string,
   localLogs: DailyLog[],
-  localProfile: UserProfile
-): Promise<{ logs: DailyLog[]; profile: UserProfile; status: SyncStatus }> {
+  localProfile: UserProfile,
+  overrideToken?: string
+): Promise<{ logs: DailyLog[]; profile: UserProfile; status: SyncStatus; error?: string }> {
   const digits = normalizeSyncCode(syncCode);
   if (!digits) {
     return {
@@ -185,18 +193,27 @@ export async function syncOnStartup(
   }
 
   try {
-    const remote = await fetchCloudData(digits);
+    const remote = await fetchCloudData(digits, overrideToken);
+
     if (!remote) {
-      // Remote does not exist yet (brand new code) -> Push initial local state
-      const pushRes = await pushDataToCloud(digits, localLogs, localProfile);
+      // Remote does not exist yet (brand new sync space) -> Push local initial state
+      const pushRes = await pushDataToCloud(digits, localLogs, localProfile, overrideToken);
+      if (pushRes.success && pushRes.data) {
+        return {
+          logs: pushRes.data.logs.filter(l => !l.deletedAt),
+          profile: pushRes.data.profile,
+          status: 'synced',
+        };
+      }
       return {
-        logs: (pushRes.data?.logs || localLogs).filter(l => !l.deletedAt),
-        profile: pushRes.data?.profile || localProfile,
-        status: pushRes.success ? 'synced' : 'pending',
+        logs: localLogs.filter(l => !l.deletedAt),
+        profile: localProfile,
+        status: 'pending',
+        error: pushRes.error,
       };
     }
 
-    // Two-way Conflict-Safe Merge
+    // Conflict-Safe Merge
     const mergedLogsAll = mergeLogsConflictSafe(localLogs, remote.logs);
     const mergedProfile = mergeProfilesConflictSafe(localProfile, remote.profile);
 
@@ -204,17 +221,17 @@ export async function syncOnStartup(
     saveLogsWithTombstones(mergedLogsAll);
     saveProfile(mergedProfile);
 
-    // Check if local had newer changes (logs or profile) that server needs to store
+    // Detect if local has records or profile newer than remote
     const localHasNewerLogs = mergedLogsAll.some(m => {
       const remoteMatch = remote.logs.find(r => r.date === m.date);
       if (!remoteMatch) return true;
       return getTimestampMs(m.updatedAt) > getTimestampMs(remoteMatch.updatedAt);
     });
     const localHasNewerProfile = getTimestampMs(localProfile.updatedAt) > getTimestampMs(remote.profile?.updatedAt);
-    const needsPush = localHasNewerLogs || localHasNewerProfile;
+    const needsUpload = localHasNewerLogs || localHasNewerProfile;
 
-    if (needsPush) {
-      const pushRes = await pushDataToCloud(digits, mergedLogsAll, mergedProfile);
+    if (needsUpload) {
+      const pushRes = await pushDataToCloud(digits, mergedLogsAll, mergedProfile, overrideToken);
       if (pushRes.success && pushRes.data) {
         return {
           logs: pushRes.data.logs.filter(l => !l.deletedAt),
@@ -222,36 +239,48 @@ export async function syncOnStartup(
           status: 'synced',
         };
       } else {
+        // Push failed: keep local merged data safe, set status to pending/error
         return {
           logs: mergedLogsAll.filter(l => !l.deletedAt),
           profile: mergedProfile,
           status: 'pending',
+          error: pushRes.error,
         };
       }
     }
 
+    // Remote was up-to-date and local had no un-synced edits
     saveLastSyncTime(new Date().toISOString());
     return {
       logs: mergedLogsAll.filter(l => !l.deletedAt),
       profile: mergedProfile,
       status: 'synced',
     };
-  } catch (err) {
-    console.warn('Startup sync error:', err);
+  } catch (err: any) {
+    console.warn('Reconciliation error:', err);
     return {
       logs: localLogs.filter(l => !l.deletedAt),
       profile: localProfile,
       status: 'error',
+      error: err?.message || 'Lỗi kết nối máy chủ',
     };
   }
 }
 
+export async function syncOnStartup(
+  syncCode: string,
+  localLogs: DailyLog[],
+  localProfile: UserProfile
+): Promise<{ logs: DailyLog[]; profile: UserProfile; status: SyncStatus }> {
+  return reconcileWithCloud(syncCode, localLogs, localProfile);
+}
+
 /**
- * Subscribe to realtime Cloud sync updates via event ping and visibility change
+ * Subscribe to realtime Cloud sync updates via event ping and visibility change with canonical reconciliation
  */
 export function subscribeToCloudSync(
   syncCode: string,
-  onUpdate: (data: { logs: DailyLog[]; profile: UserProfile }) => void,
+  onReconciled: (result: { logs: DailyLog[]; profile: UserProfile; status: SyncStatus }) => void,
   pollIntervalMs = 15000
 ): () => void {
   const digits = normalizeSyncCode(syncCode);
@@ -259,24 +288,23 @@ export function subscribeToCloudSync(
 
   let isSubscribed = true;
 
-  const checkForRemoteUpdates = async () => {
+  const performSyncCheck = async () => {
     if (!isSubscribed) return;
     try {
-      const remoteData = await fetchCloudData(digits);
-      if (remoteData && remoteData.logs && isSubscribed) {
-        onUpdate({
-          logs: remoteData.logs,
-          profile: remoteData.profile || {},
-        });
+      const currentLocal = getAllStoredLogsWithTombstones();
+      const currentProfile = getStoredProfile();
+      const result = await reconcileWithCloud(digits, currentLocal, currentProfile);
+      if (isSubscribed) {
+        onReconciled(result);
       }
     } catch {}
   };
 
-  const intervalId = setInterval(checkForRemoteUpdates, pollIntervalMs);
+  const intervalId = setInterval(performSyncCheck, pollIntervalMs);
 
   const handleVisibilityChange = () => {
     if (document.visibilityState === 'visible') {
-      checkForRemoteUpdates();
+      performSyncCheck();
     }
   };
 
