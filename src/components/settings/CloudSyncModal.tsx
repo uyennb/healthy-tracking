@@ -11,6 +11,8 @@ import {
   pushDataToCloud,
   fetchCloudData,
   encodeDataToBase64,
+  decodeDataFromBase64,
+  decodeDataFromBase64Async,
 } from '../../services/cloudSyncService';
 
 /**
@@ -161,21 +163,59 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   const handleConnectExistingCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (inputCode.includes('sync=')) {
+    const trimmed = inputCode.trim();
+    if (!trimmed) return;
+
+    setErrorMsg('');
+
+    // 1. If user pasted a full URL or direct sync link (?d= or ?data=)
+    if (trimmed.includes('d=') || trimmed.includes('data=')) {
       try {
-        window.location.href = inputCode.trim();
-        return;
+        const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://healthy-tracking.vercel.app/${trimmed}`);
+        const dataParam = urlObj.searchParams.get('d') || urlObj.searchParams.get('data');
+        const syncParam = urlObj.searchParams.get('sync');
+        if (dataParam) {
+          const decoded = decodeDataFromBase64(dataParam);
+          if (decoded && decoded.logs && decoded.logs.length > 0) {
+            onConnectSync(syncParam ? formatDisplayCode(syncParam) : (syncCode || '115-628'), {
+              logs: decoded.logs,
+              profile: decoded.profile || profile,
+            });
+            setInputCode('');
+            return;
+          }
+          const asyncDecoded = await decodeDataFromBase64Async(dataParam);
+          if (asyncDecoded && asyncDecoded.logs && asyncDecoded.logs.length > 0) {
+            onConnectSync(syncParam ? formatDisplayCode(syncParam) : (syncCode || '115-628'), {
+              logs: asyncDecoded.logs,
+              profile: asyncDecoded.profile || profile,
+            });
+            setInputCode('');
+            return;
+          }
+        }
+      } catch (err) {
+        console.warn('Direct URL sync decode error:', err);
+      }
+    }
+
+    // 2. Extract 6-digit code if user pasted a sync URL (e.g. ?sync=115-628) or raw code (115-628)
+    let codeStr = trimmed;
+    if (trimmed.includes('sync=')) {
+      try {
+        const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://healthy-tracking.vercel.app/${trimmed}`);
+        codeStr = urlObj.searchParams.get('sync') || trimmed;
       } catch {}
     }
-    const cleanDigits = normalizeSyncCode(inputCode);
+
+    const cleanDigits = normalizeSyncCode(codeStr);
     if (!cleanDigits || cleanDigits.length !== 6) {
-      setErrorMsg(isVI ? 'Vui lòng nhập đủ 6 số kết nối (ví dụ: 686-888 hoặc 686888).' : 'Please enter a valid 6-digit sync code (e.g. 686-888).');
+      setErrorMsg(isVI ? 'Vui lòng nhập hoặc dán mã 6 số (ví dụ: 115-628) hoặc link đồng bộ.' : 'Please enter a valid 6-digit sync code (e.g. 115-628) or sync link.');
       return;
     }
 
     const formattedCode = formatDisplayCode(cleanDigits);
     setIsConnecting(true);
-    setErrorMsg('');
 
     try {
       const remoteData = await fetchCloudData(cleanDigits);
@@ -363,10 +403,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {showQR && (
                 <div className="mt-3 p-3 bg-white rounded-xl border border-emerald-200 text-center animate-fadeIn">
                   <div className="inline-block p-2 bg-white rounded-lg shadow-inner">
-                    <QRCodeSVG value={displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}${encodeDataToBase64(logs, profile) ? `&d=${encodeDataToBase64(logs, profile)}` : ''}` : cleanUrl} size={160} />
+                    <QRCodeSVG value={cleanUrl} size={160} />
                   </div>
                   <p className="text-[11px] text-emerald-800 font-bold mt-2">
-                    {isVI ? '📱 Quét QR trên máy khác để nhận toàn bộ dữ liệu ngay lập tức' : '📱 Scan QR to sync all data instantly'}
+                    {isVI ? '📱 Mở camera điện thoại quét mã QR để kết nối đồng bộ tức thì' : '📱 Scan QR code with phone camera to connect sync'}
                   </p>
                 </div>
               )}
