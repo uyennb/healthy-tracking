@@ -116,8 +116,38 @@ export function decodeDataFromBase64(base64Str: string): { logs?: DailyLog[]; pr
   }
 }
 
+export function isSampleLog(log: DailyLog): boolean {
+  if (!log) return false;
+  if (log.id && (log.id.startsWith('sample') || log.id.includes('sample'))) return true;
+  return false;
+}
+
+export function mergeSingleLog(logA: DailyLog, logB: DailyLog): DailyLog {
+  const isA = isSampleLog(logA);
+  const isB = isSampleLog(logB);
+
+  // If one is sample log and one is real user log, ALWAYS prefer real user log!
+  if (isA && !isB) return logB;
+  if (!isA && isB) return logA;
+
+  // If both are real logs or both sample, merge fields with logB overriding logA
+  return {
+    ...logA,
+    ...logB,
+    caloIn: logB.caloIn ?? logA.caloIn ?? 0,
+    caloOut: logB.caloOut ?? logA.caloOut ?? 0,
+    protein: logB.protein ?? logA.protein ?? 0,
+    carbs: logB.carbs ?? logA.carbs ?? 0,
+    fats: logB.fats ?? logA.fats ?? 0,
+    fiber: logB.fiber ?? logA.fiber ?? 0,
+    workoutDuration: logB.workoutDuration ?? logA.workoutDuration ?? 0,
+    workoutCalo: logB.workoutCalo ?? logA.workoutCalo ?? 0,
+    note: logB.note || logA.note || '',
+  };
+}
+
 /**
- * Safely merge local and remote daily logs by date without losing or corrupting local entries
+ * Safely merge local and remote daily logs by date: real user logs ALWAYS override sample logs!
  */
 export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): DailyLog[] {
   if (!remote || remote.length === 0) return local || [];
@@ -132,14 +162,36 @@ export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): Dail
     }
   });
 
-  // Local logs completely override remote logs for matching dates to guarantee accuracy
+  // Process local logs using mergeSingleLog
   local.forEach(log => {
     if (log && log.date) {
-      map.set(log.date, { ...log });
+      const existing = map.get(log.date);
+      if (!existing) {
+        map.set(log.date, log);
+      } else {
+        map.set(log.date, mergeSingleLog(existing, log));
+      }
     }
   });
 
   return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+}
+
+/**
+ * Merge local and remote user profiles without resetting custom profile settings
+ */
+export function mergeProfiles(local: UserProfile, remote?: UserProfile): UserProfile {
+  if (!remote) return local;
+  if (!local) return remote;
+
+  return {
+    name: (local.name && local.name !== 'Người dùng') ? local.name : (remote.name || local.name || 'Bảo Uyên'),
+    gender: local.gender || remote.gender || 'female',
+    birthDate: local.birthDate || remote.birthDate || '1998-05-15',
+    height: (local.height && local.height > 0) ? local.height : (remote.height || 162),
+    weight: (local.weight && local.weight > 0) ? local.weight : (remote.weight || 54),
+    avatarUrl: local.avatarUrl || remote.avatarUrl,
+  };
 }
 
 const REST_URL = 'https://api.restful-api.dev/objects';

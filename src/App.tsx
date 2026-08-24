@@ -32,7 +32,7 @@ import { filterLogsByPeriod, processChartData } from './utils/dateUtils';
 import { getTranslation } from './utils/i18n';
 import { format, subDays } from 'date-fns';
 import { BarChart3, LineChart as LineChartIcon, Table as TableIcon, Database, Download } from 'lucide-react';
-import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, decodeDataFromBase64, decodeDataFromBase64Async, formatDisplayCode, mergeLogs } from './services/cloudSyncService';
+import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, decodeDataFromBase64, decodeDataFromBase64Async, formatDisplayCode, mergeLogs, mergeProfiles } from './services/cloudSyncService';
 
 import { USER_REAL_LOGS } from './utils/sampleData';
 
@@ -95,15 +95,16 @@ export function App() {
             const merged = mergeLogs(currentLocal, decoded.logs);
             saveLogs(merged);
             setLogs(merged);
-            if (decoded.profile) {
-              saveProfile(decoded.profile);
-              setProfile(decoded.profile);
-            }
+            const currentProfile = getStoredProfile();
+            const mergedProf = mergeProfiles(currentProfile, decoded.profile);
+            saveProfile(mergedProf);
+            setProfile(mergedProf);
+
             if (querySync) {
               const clean = formatDisplayCode(querySync);
               saveSyncCode(clean);
               setSyncCode(clean);
-              pushDataToCloud(clean, merged, decoded.profile || profile);
+              pushDataToCloud(clean, merged, mergedProf);
             }
             showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
             window.history.replaceState({}, '', window.location.pathname);
@@ -122,11 +123,12 @@ export function App() {
             const merged = mergeLogs(currentLocal, data.logs);
             saveLogs(merged);
             setLogs(merged);
-            if (data.profile) {
-              saveProfile(data.profile);
-              setProfile(data.profile);
-            }
-            pushDataToCloud(clean, merged, data.profile || profile);
+            const currentProfile = getStoredProfile();
+            const mergedProf = mergeProfiles(currentProfile, data.profile);
+            saveProfile(mergedProf);
+            setProfile(mergedProf);
+
+            pushDataToCloud(clean, merged, mergedProf);
             showToast(language === 'vi' ? '✅ Đã đồng bộ dữ liệu mới nhất thành công!' : '✅ Synced latest data successfully!');
           } else if (currentLocal && currentLocal.length > 0) {
             pushDataToCloud(clean, currentLocal, profile);
@@ -153,14 +155,16 @@ export function App() {
         saveLogs(merged);
         setLogs(merged);
 
-        // If local merged dataset has extra entries (e.g. 22/8 log from phone), push back to cloud!
+        // If local merged dataset has extra entries, push back to cloud!
         if (merged.length > cloudLogs.length) {
           pushDataToCloud(syncCode, merged, cloudProfile || profile);
         }
       }
       if (cloudProfile) {
-        saveProfile(cloudProfile);
-        setProfile(cloudProfile);
+        const currentProfile = getStoredProfile();
+        const mergedProf = mergeProfiles(currentProfile, cloudProfile);
+        saveProfile(mergedProf);
+        setProfile(mergedProf);
       }
     });
 
