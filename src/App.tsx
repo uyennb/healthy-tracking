@@ -89,14 +89,36 @@ export function App() {
       const queryData = params.get('data') || params.get('d');
 
       if (queryData) {
-        decodeDataFromBase64Async(queryData).then(decoded => {
-          if (decoded && decoded.logs && decoded.logs.length > 0) {
+        const decoded = decodeDataFromBase64(queryData);
+        if (decoded && decoded.logs && decoded.logs.length > 0) {
+          const currentLocal = getStoredLogs();
+          const merged = mergeLogs(currentLocal, decoded.logs);
+          saveLogs(merged);
+          setLogs(merged);
+          const currentProfile = getStoredProfile();
+          const mergedProf = mergeProfiles(currentProfile, decoded.profile);
+          saveProfile(mergedProf);
+          setProfile(mergedProf);
+
+          if (querySync) {
+            const clean = formatDisplayCode(querySync);
+            saveSyncCode(clean);
+            setSyncCode(clean);
+            pushDataToCloud(clean, merged, mergedProf);
+          }
+          showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
+          window.history.replaceState({}, '', window.location.pathname);
+          return;
+        }
+
+        decodeDataFromBase64Async(queryData).then(asyncDecoded => {
+          if (asyncDecoded && asyncDecoded.logs && asyncDecoded.logs.length > 0) {
             const currentLocal = getStoredLogs();
-            const merged = mergeLogs(currentLocal, decoded.logs);
+            const merged = mergeLogs(currentLocal, asyncDecoded.logs);
             saveLogs(merged);
             setLogs(merged);
             const currentProfile = getStoredProfile();
-            const mergedProf = mergeProfiles(currentProfile, decoded.profile);
+            const mergedProf = mergeProfiles(currentProfile, asyncDecoded.profile);
             saveProfile(mergedProf);
             setProfile(mergedProf);
 

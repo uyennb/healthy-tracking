@@ -9,7 +9,7 @@ import {
   normalizeSyncCode,
   pushDataToCloud,
   fetchCloudData,
-  encodeDataToBase64Async,
+  encodeDataToBase64,
 } from '../../services/cloudSyncService';
 
 /**
@@ -101,7 +101,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const isVI = language === 'vi';
   const displayCode = formatDisplayCode(syncCode);
   const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const qrUrl = displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl;
+  const dataPayload = encodeDataToBase64(logs, profile);
+  const qrUrl = displayCode
+    ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}${dataPayload ? `&d=${dataPayload}` : ''}`
+    : currentUrl;
 
   if (!isOpen) return null;
 
@@ -197,7 +200,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   // Copy instant 1-click sync link using Web Share API or dual-layer fallback
   const handleCopyLink = () => {
-    const targetUrl = qrUrl || (displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl);
+    const targetUrl = qrUrl;
     if (!targetUrl) return;
 
     if (navigator.share) {
