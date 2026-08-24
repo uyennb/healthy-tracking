@@ -19,6 +19,26 @@ export const DEFAULT_GOALS: UserGoals = {
 
 const REAL_DATA_MIGRATION_KEY = 'nutrifit_migrated_v6_clean';
 
+export function sanitizeLog(log: any): DailyLog | null {
+  if (!log || typeof log !== 'object') return null;
+  const date = String(log.date || '').trim();
+  if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) return null;
+
+  return {
+    id: String(log.id || `log-${date}-${Math.random().toString(36).substring(2, 7)}`),
+    date,
+    caloIn: Math.max(0, Number(log.caloIn) || 0),
+    caloOut: Math.max(0, Number(log.caloOut) || 0),
+    protein: Math.max(0, Number(log.protein) || 0),
+    carbs: Math.max(0, Number(log.carbs) || 0),
+    fats: Math.max(0, Number(log.fats) || 0),
+    fiber: Math.max(0, Number(log.fiber) || 0),
+    workoutDuration: Math.max(0, Number(log.workoutDuration) || 0),
+    workoutCalo: Math.max(0, Number(log.workoutCalo) || 0),
+    note: String(log.note || ''),
+  };
+}
+
 export function getStoredLogs(): DailyLog[] {
   try {
     const isMigrated = localStorage.getItem(REAL_DATA_MIGRATION_KEY);
@@ -37,9 +57,9 @@ export function getStoredLogs(): DailyLog[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      const valid = parsed.filter((l: any) => l && typeof l === 'object' && l.date && typeof l.date === 'string');
+      const valid = parsed.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
       if (valid.length > 0) {
-        return valid.sort((a: DailyLog, b: DailyLog) => String(b.date).localeCompare(String(a.date)));
+        return valid.sort((a, b) => String(b.date).localeCompare(String(a.date)));
       }
     }
     const realLogs = generateSampleData(8);
@@ -54,7 +74,7 @@ export function getStoredLogs(): DailyLog[] {
 export function saveLogs(logs: DailyLog[]): void {
   try {
     const safeLogs = Array.isArray(logs) ? logs : [];
-    const valid = safeLogs.filter((l: any) => l && typeof l === 'object' && l.date && typeof l.date === 'string');
+    const valid = safeLogs.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
     const sorted = valid.sort((a, b) => String(b.date).localeCompare(String(a.date)));
     localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(sorted));
   } catch (err) {

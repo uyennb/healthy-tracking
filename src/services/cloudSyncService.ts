@@ -157,30 +157,31 @@ export function mergeSingleLog(logA: DailyLog, logB: DailyLog): DailyLog {
   };
 }
 
+import { sanitizeLog } from '../utils/storageUtils';
+
 /**
  * Safely merge local and remote daily logs by date: incoming remote logs (pushed from phone) override matching local dates
  */
 export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): DailyLog[] {
-  if (!remote || remote.length === 0) return local || [];
-  if (!local || local.length === 0) return remote || [];
+  const safeLocal = (Array.isArray(local) ? local : []).map(sanitizeLog).filter((l): l is DailyLog => l !== null);
+  const safeRemote = (Array.isArray(remote) ? remote : []).map(sanitizeLog).filter((l): l is DailyLog => l !== null);
+
+  if (safeRemote.length === 0) return safeLocal;
+  if (safeLocal.length === 0) return safeRemote;
 
   const map = new Map<string, DailyLog>();
 
   // Add local logs first
-  local.forEach(log => {
-    if (log && log.date) {
-      map.set(log.date, log);
-    }
+  safeLocal.forEach(log => {
+    map.set(log.date, log);
   });
 
   // Incoming remote logs (from Cloud) OVERRIDE matching local dates to guarantee updated user data
-  remote.forEach(log => {
-    if (log && log.date) {
-      map.set(log.date, { ...log });
-    }
+  safeRemote.forEach(log => {
+    map.set(log.date, log);
   });
 
-  return Array.from(map.values()).sort((a, b) => b.date.localeCompare(a.date));
+  return Array.from(map.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
 /**

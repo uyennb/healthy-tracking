@@ -27,9 +27,9 @@ class ErrorBoundary extends Component<Props, State> {
 
   private handleReset = () => {
     try {
-      localStorage.removeItem('nutrifit_daily_logs_v1');
+      localStorage.clear();
     } catch {}
-    window.location.reload();
+    window.location.href = window.location.pathname;
   };
 
   public render() {
