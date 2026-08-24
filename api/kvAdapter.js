@@ -44,10 +44,28 @@ return cjson.encode({ success = true })
 // Test-mode atomic store map for integration testing without live cloud credentials
 const testMemoryStorage = new Map();
 
+function sanitizeEnvValue(val) {
+  if (!val) return '';
+  let str = String(val).trim();
+  // Strip surrounding quotes
+  str = str.replace(/^["'`]|["'`]$/g, '').trim();
+  // If user pasted KEY=VALUE into Value field by mistake
+  if (str.startsWith('UPSTASH_') || str.startsWith('KV_')) {
+    const eqIdx = str.indexOf('=');
+    if (eqIdx !== -1) {
+      str = str.substring(eqIdx + 1).trim().replace(/^["'`]|["'`]$/g, '').trim();
+    }
+  }
+  return str;
+}
+
 export class KvAdapter {
   constructor(options = {}) {
-    this.url = options.url || process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-    this.token = options.token || process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+    const rawUrl = options.url || process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
+    const rawToken = options.token || process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+
+    this.url = sanitizeEnvValue(rawUrl);
+    this.token = sanitizeEnvValue(rawToken);
     this.isTestMode = options.isTestMode || process.env.KV_TEST_MODE === 'true';
 
     if (this.url && this.token && !this.isTestMode) {
