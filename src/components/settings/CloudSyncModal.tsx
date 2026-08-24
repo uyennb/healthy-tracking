@@ -296,22 +296,22 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                   </button>
                 </div>
 
-                {/* 2 Main Cloud Action Buttons: Push to Cloud & Pull from Cloud */}
+                {/* Main Action Buttons */}
                 <div className="grid grid-cols-2 gap-2 pt-2 border-t border-slate-100">
                   <button
                     type="button"
                     disabled={isConnecting}
                     onClick={handleManualPush}
-                    className="flex items-center justify-center gap-1 text-xs font-extrabold py-2.5 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white shadow-sm transition active:scale-95 disabled:opacity-50"
+                    className="flex items-center justify-center gap-1.5 text-xs font-extrabold py-2.5 px-3 rounded-xl bg-teal-600 hover:bg-teal-700 text-white shadow-sm transition active:scale-95 disabled:opacity-50"
                   >
                     {pushed ? (
                       <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>{isVI ? 'Đã đẩy lên!' : 'Uploaded!'}</span>
+                        <Check className="w-4 h-4" />
+                        <span>{isVI ? 'Đã đẩy lên! ✅' : 'Uploaded! ✅'}</span>
                       </>
                     ) : (
                       <>
-                        <RefreshCw className={`w-3.5 h-3.5 ${isConnecting ? 'animate-spin' : ''}`} />
+                        <Upload className={`w-4 h-4 ${isConnecting ? 'animate-bounce' : ''}`} />
                         <span>{isVI ? '📤 Đẩy lên Cloud' : 'Push to Cloud'}</span>
                       </>
                     )}
@@ -321,17 +321,38 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                     type="button"
                     disabled={isConnecting}
                     onClick={handleManualPull}
-                    className="flex items-center justify-center gap-1 text-xs font-extrabold py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition active:scale-95 disabled:opacity-50"
+                    className="flex items-center justify-center gap-1.5 text-xs font-extrabold py-2.5 px-3 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white shadow-sm transition active:scale-95 disabled:opacity-50"
                   >
                     {pulled ? (
                       <>
-                        <Check className="w-3.5 h-3.5" />
-                        <span>{isVI ? 'Đã tải từ Cloud!' : 'Downloaded!'}</span>
+                        <Check className="w-4 h-4" />
+                        <span>{isVI ? 'Đã tải về! ✅' : 'Downloaded! ✅'}</span>
                       </>
                     ) : (
                       <>
-                        <Cloud className="w-3.5 h-3.5" />
+                        <Download className="w-4 h-4" />
                         <span>{isVI ? '📥 Tải từ Cloud' : 'Pull from Cloud'}</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* 1-Click Sync Link Button (Failproof via Zalo / Messenger / AirDrop) */}
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={handleCopyLink}
+                    className="w-full flex items-center justify-center gap-2 py-2 px-3 bg-slate-900 hover:bg-slate-800 text-white text-xs font-extrabold rounded-xl shadow-sm transition active:scale-95"
+                  >
+                    {copiedLink ? (
+                      <>
+                        <Check className="w-4 h-4 text-emerald-400" />
+                        <span>{isVI ? 'Đã sao chép Link kèm Dữ liệu! ✅' : 'Copied Link with Data! ✅'}</span>
+                      </>
+                    ) : (
+                      <>
+                        <Link className="w-4 h-4 text-teal-400" />
+                        <span>{isVI ? '🔗 Copy Link Kèm Dữ Liệu (1-Click)' : '🔗 Copy Link with Data (1-Click)'}</span>
                       </>
                     )}
                   </button>
@@ -342,10 +363,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {showQR && (
                 <div className="mt-3 p-3 bg-white rounded-xl border border-emerald-200 text-center animate-fadeIn">
                   <div className="inline-block p-2 bg-white rounded-lg shadow-inner">
-                    <QRCodeSVG value={cleanUrl} size={160} />
+                    <QRCodeSVG value={displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}${encodeDataToBase64(logs, profile) ? `&d=${encodeDataToBase64(logs, profile)}` : ''}` : cleanUrl} size={160} />
                   </div>
                   <p className="text-[11px] text-emerald-800 font-bold mt-2">
-                    {isVI ? '📱 Quét QR để xem link đồng bộ' : '📱 Scan QR to view sync link'}
+                    {isVI ? '📱 Quét QR trên máy khác để nhận toàn bộ dữ liệu ngay lập tức' : '📱 Scan QR to sync all data instantly'}
                   </p>
                 </div>
               )}
