@@ -97,8 +97,8 @@ export async function decodeDataFromBase64Async(str: string): Promise<{ logs?: D
 export function encodeDataToBase64(logs: DailyLog[], profile: UserProfile): string {
   try {
     const jsonStr = JSON.stringify({ logs, profile, t: Date.now() });
-    const utf8Bytes = encodeURIComponent(jsonStr).replace(/%([0-9A-F]{2})/g, (_, p1) => String.fromCharCode(parseInt(p1, 16)));
-    return btoa(utf8Bytes).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    const base64 = btoa(unescape(encodeURIComponent(jsonStr)));
+    return base64.replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   } catch {
     return '';
   }
@@ -109,15 +109,13 @@ export function decodeDataFromBase64(base64Str: string): { logs?: DailyLog[]; pr
   try {
     let base64 = base64Str.replace(/-/g, '+').replace(/_/g, '/');
     while (base64.length % 4) base64 += '=';
-    const binary = atob(base64);
-    const jsonStr = decodeURIComponent(Array.from(binary).map(c => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2)).join(''));
+    const jsonStr = decodeURIComponent(escape(atob(base64)));
     const parsed = JSON.parse(jsonStr);
     if (parsed && Array.isArray(parsed.logs)) {
       return { logs: parsed.logs, profile: parsed.profile };
     }
     return null;
   } catch {
-    // Legacy fallback
     try {
       const jsonStr = decodeURIComponent(atob(base64Str));
       const parsed = JSON.parse(jsonStr);

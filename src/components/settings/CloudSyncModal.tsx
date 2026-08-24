@@ -198,28 +198,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     }
   };
 
-  // Copy instant 1-click sync link using Web Share API or dual-layer fallback
+  // Copy instant 1-click sync link directly to clipboard
   const handleCopyLink = () => {
     const targetUrl = qrUrl;
     if (!targetUrl) return;
-
-    if (navigator.share) {
-      navigator.share({
-        title: 'NutriFit Cloud Sync',
-        text: 'Link đồng bộ dữ liệu NutriFit 1-click:',
-        url: targetUrl,
-      }).then(() => {
-        setCopiedLink(true);
-        setTimeout(() => setCopiedLink(false), 2500);
-      }).catch(() => {
-        const ok = copyToClipboard(targetUrl);
-        if (ok) {
-          setCopiedLink(true);
-          setTimeout(() => setCopiedLink(false), 2500);
-        }
-      });
-      return;
-    }
 
     const ok = copyToClipboard(targetUrl);
     if (ok) {
