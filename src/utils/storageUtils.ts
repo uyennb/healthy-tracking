@@ -51,16 +51,7 @@ export function getStoredLogs(): DailyLog[] {
     if (Array.isArray(parsed) && parsed.length > 0) {
       const valid = parsed.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
       if (valid.length > 0) {
-        // Guarantee 22/8 and 23/8 default entries are always present if missing from local array
-        const defaultSample = generateSampleData(10);
-        const map = new Map<string, DailyLog>();
-        // Add default sample logs first
-        defaultSample.forEach(l => map.set(l.date, l));
-        // User's valid local logs override default sample logs
-        valid.forEach(l => map.set(l.date, l));
-        const merged = Array.from(map.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
-        saveLogs(merged);
-        return merged;
+        return valid.sort((a, b) => String(b.date).localeCompare(String(a.date)));
       }
     }
     const realLogs = generateSampleData(10);
