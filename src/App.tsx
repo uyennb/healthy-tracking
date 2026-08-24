@@ -81,7 +81,7 @@ export function App() {
     }
   }, []);
 
-  // Check URL query string for QR code or direct sync link (?sync=XXX-XXX&d=...)
+  // Check URL query string ONLY for direct 1-click sync link containing data payload (?sync=XXX-XXX&d=PAYLOAD)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -104,7 +104,6 @@ export function App() {
             const clean = formatDisplayCode(querySync);
             saveSyncCode(clean);
             setSyncCode(clean);
-            pushDataToCloud(clean, merged, mergedProf);
           }
           showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
           window.history.replaceState({}, '', window.location.pathname);
@@ -126,7 +125,6 @@ export function App() {
               const clean = formatDisplayCode(querySync);
               saveSyncCode(clean);
               setSyncCode(clean);
-              pushDataToCloud(clean, merged, mergedProf);
             }
             showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
             window.history.replaceState({}, '', window.location.pathname);
@@ -139,59 +137,10 @@ export function App() {
         const clean = formatDisplayCode(querySync);
         saveSyncCode(clean);
         setSyncCode(clean);
-        fetchCloudData(clean).then(data => {
-          const currentLocal = getStoredLogs();
-          if (data && data.logs && data.logs.length > 0) {
-            const merged = mergeLogs(currentLocal, data.logs);
-            saveLogs(merged);
-            setLogs(merged);
-            const currentProfile = getStoredProfile();
-            const mergedProf = mergeProfiles(currentProfile, data.profile);
-            saveProfile(mergedProf);
-            setProfile(mergedProf);
-
-            pushDataToCloud(clean, merged, mergedProf);
-            showToast(language === 'vi' ? '✅ Đã đồng bộ dữ liệu mới nhất thành công!' : '✅ Synced latest data successfully!');
-          } else if (currentLocal && currentLocal.length > 0) {
-            pushDataToCloud(clean, currentLocal, profile);
-          }
-        });
         window.history.replaceState({}, '', window.location.pathname);
       }
     }
   }, []);
-
-  // Subscribe to Realtime Cloud Sync when syncCode is set
-  useEffect(() => {
-    if (!syncCode) return;
-
-    const unsubscribe = subscribeToCloudSync(syncCode, ({ logs: cloudLogs, profile: cloudProfile, updatedAt }) => {
-      const remoteTime = updatedAt ? new Date(updatedAt).getTime() : 0;
-      if (lastLocalUpdateRef.current > 0 && remoteTime < lastLocalUpdateRef.current) {
-        return; // Ignore stale remote data only if local data was explicitly updated strictly after remote
-      }
-
-      if (cloudLogs && Array.isArray(cloudLogs) && cloudLogs.length > 0) {
-        const currentLocal = getStoredLogs();
-        const merged = mergeLogs(currentLocal, cloudLogs);
-        saveLogs(merged);
-        setLogs(merged);
-
-        // If local merged dataset has extra entries, push back to cloud!
-        if (merged.length > cloudLogs.length) {
-          pushDataToCloud(syncCode, merged, cloudProfile || profile);
-        }
-      }
-      if (cloudProfile) {
-        const currentProfile = getStoredProfile();
-        const mergedProf = mergeProfiles(currentProfile, cloudProfile);
-        saveProfile(mergedProf);
-        setProfile(mergedProf);
-      }
-    });
-
-    return () => unsubscribe();
-  }, [syncCode]);
 
   // Helper to auto-push local updates to Cloud
   const autoPushCloud = (newLogs: DailyLog[], newProfile: UserProfile = profile) => {

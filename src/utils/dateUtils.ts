@@ -87,11 +87,15 @@ export function filterLogsByPeriod(
 }
 
 /**
- * Prepare data for display in charts or tables
+ * Prepare data for display in charts (Always sorted chronologically ASCENDING: Oldest -> Newest left-to-right)
  */
 export function processChartData(logs: DailyLog[]): AggregatedData[] {
   const safeLogs = (Array.isArray(logs) ? logs : []).filter(l => l && typeof l === 'object' && l.date && typeof l.date === 'string');
-  return safeLogs.map(log => {
+
+  // ALWAYS sort chronologically ASCENDING (oldest -> newest) for Left-to-Right Chart timeline!
+  const sorted = [...safeLogs].sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  return sorted.map(log => {
     let label = log.date;
     try {
       const dateObj = parseISO(log.date);
