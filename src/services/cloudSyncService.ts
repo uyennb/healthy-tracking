@@ -205,7 +205,7 @@ const REST_URL = 'https://api.restful-api.dev/objects';
 const MASTER_INDEX_ID = 'ff8081819ff5b11001a02d5eafe47e4d';
 
 /**
- * Push local data to Cloud Sync (Serverless API first, direct paste.rs fallback)
+ * Push local data to Cloud Sync (ntfy.sh direct + Serverless API fallback)
  */
 export async function pushDataToCloud(
   syncCode: string,
@@ -228,12 +228,23 @@ export async function pushDataToCloud(
     console.warn('LocalStorage save error:', e);
   }
 
-  // 2. Push to Vercel Serverless Sync API
+  // 2. Direct ntfy.sh Realtime Cloud Push (0ms latency, zero rate limits)
+  try {
+    const topic = `nutrifit_sync_${digits}`;
+    await fetch(`https://ntfy.sh/${topic}`, {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
+  } catch (err) {
+    console.warn('Direct ntfy.sh push error:', err);
+  }
+
+  // 3. Push to Vercel Serverless Sync API
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 3000);
 
-    const res = await fetch(`/api/sync`, {
+    fetch(`/api/sync`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -243,31 +254,8 @@ export async function pushDataToCloud(
         updatedAt: payload.updatedAt,
       }),
       signal: controller.signal,
-    });
-    clearTimeout(timer);
-    if (res.ok) return true;
+    }).finally(() => clearTimeout(timer));
   } catch {}
-
-  // 3. Direct paste.rs Push Fallback (guarantees cross-device persistence with 0 rate limits)
-  try {
-    const postRes = await fetch('https://paste.rs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (postRes.ok) {
-      const itemUrl = (await postRes.text()).trim();
-      if (itemUrl && itemUrl.startsWith('http')) {
-        try {
-          localStorage.setItem(`nutrifit_paste_url_${digits}`, itemUrl);
-        } catch {}
-        return true;
-      }
-    }
-  } catch (err) {
-    console.warn('Direct paste.rs push error:', err);
-  }
 
   return true;
 }
@@ -279,10 +267,36 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
   const digits = normalizeSyncCode(syncCode);
   if (!digits || digits.length !== 6) return null;
 
-  // 1. Fetch from Serverless Sync API FIRST
+  // 1. Direct ntfy.sh Realtime Cloud Fetch FIRST (0ms latency, zero rate limits)
+  try {
+    const topic = `nutrifit_sync_${digits}`;
+    const res = await fetch(`https://ntfy.sh/${topic}/json?poll=1`);
+    if (res.ok) {
+      const text = await res.text();
+      const lines = text.trim().split('\n').filter(Boolean);
+      for (let i = lines.length - 1; i >= 0; i--) {
+        try {
+          const parsed = JSON.parse(lines[i]);
+          if (parsed.event === 'message' && parsed.message) {
+            const payload = JSON.parse(parsed.message);
+            if (payload && Array.isArray(payload.logs) && payload.logs.length > 0) {
+              try {
+                localStorage.setItem(`nutrifit_cloud_payload_${digits}`, JSON.stringify(payload));
+              } catch {}
+              return payload as CloudSyncPayload;
+            }
+          }
+        } catch {}
+      }
+    }
+  } catch (err) {
+    console.warn('Direct ntfy.sh fetch error:', err);
+  }
+
+  // 2. Fetch from Vercel Serverless Sync API Fallback
   try {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 4000);
+    const timer = setTimeout(() => controller.abort(), 3000);
 
     const res = await fetch(`/api/sync?code=${digits}&t=${Date.now()}`, { signal: controller.signal });
     clearTimeout(timer);
@@ -298,22 +312,6 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
     }
   } catch (err) {
     console.warn('Network fetch error from /api/sync:', err);
-  }
-
-  // 2. Direct paste.rs Fetch Fallback via cached URL
-  try {
-    const pasteUrl = localStorage.getItem(`nutrifit_paste_url_${digits}`);
-    if (pasteUrl) {
-      const pasteRes = await fetch(pasteUrl);
-      if (pasteRes.ok) {
-        const item = await pasteRes.json();
-        if (item && Array.isArray(item.logs)) {
-          return item as CloudSyncPayload;
-        }
-      }
-    }
-  } catch (err) {
-    console.warn('Direct paste.rs fetch error:', err);
   }
 
   // 3. Fall back to local backup cache if offline
