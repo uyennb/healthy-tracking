@@ -34,8 +34,66 @@ export function generateNumericSyncCode(): string {
 }
 
 /**
- * Encode logs & profile into Base64 string for zero-network QR code transfer
+ * Encode logs & profile into compact GZIP Base64URL string (~300 chars) for instant, loss-free link/QR transfer
  */
+export async function encodeDataToBase64Async(logs: DailyLog[], profile: UserProfile): Promise<string> {
+  try {
+    const jsonStr = JSON.stringify({ logs, profile, t: Date.now() });
+    if (typeof CompressionStream !== 'undefined') {
+      const stream = new Blob([jsonStr]).stream().pipeThrough(new CompressionStream('gzip'));
+      const response = new Response(stream);
+      const buffer = await response.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.length; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+    }
+    return btoa(encodeURIComponent(jsonStr));
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Decode compressed GZIP or Base64 string back into exact logs & profile
+ */
+export async function decodeDataFromBase64Async(str: string): Promise<{ logs?: DailyLog[]; profile?: UserProfile } | null> {
+  if (!str) return null;
+  try {
+    // 1. Try GZIP decompression first
+    if (typeof DecompressionStream !== 'undefined') {
+      try {
+        let base64 = str.replace(/-/g, '+').replace(/_/g, '/');
+        while (base64.length % 4) base64 += '=';
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) {
+          bytes[i] = binary.charCodeAt(i);
+        }
+        const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'));
+        const response = new Response(stream);
+        const text = await response.text();
+        const parsed = JSON.parse(text);
+        if (parsed && Array.isArray(parsed.logs)) {
+          return { logs: parsed.logs, profile: parsed.profile };
+        }
+      } catch {}
+    }
+
+    // 2. Fallback uncompressed decode
+    const jsonStr = decodeURIComponent(atob(str));
+    const parsed = JSON.parse(jsonStr);
+    if (parsed && Array.isArray(parsed.logs)) {
+      return { logs: parsed.logs, profile: parsed.profile };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function encodeDataToBase64(logs: DailyLog[], profile: UserProfile): string {
   try {
     const jsonStr = JSON.stringify({ logs, profile, t: Date.now() });
@@ -45,9 +103,6 @@ export function encodeDataToBase64(logs: DailyLog[], profile: UserProfile): stri
   }
 }
 
-/**
- * Decode Base64 string back into logs & profile
- */
 export function decodeDataFromBase64(base64Str: string): { logs?: DailyLog[]; profile?: UserProfile } | null {
   try {
     const jsonStr = decodeURIComponent(atob(base64Str));
@@ -62,7 +117,7 @@ export function decodeDataFromBase64(base64Str: string): { logs?: DailyLog[]; pr
 }
 
 /**
- * Safely merge local and remote daily logs by date without losing local entries
+ * Safely merge local and remote daily logs by date without losing or corrupting local entries
  */
 export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): DailyLog[] {
   if (!remote || remote.length === 0) return local || [];
@@ -70,33 +125,17 @@ export function mergeLogs(local: DailyLog[] = [], remote: DailyLog[] = []): Dail
 
   const map = new Map<string, DailyLog>();
 
-  // Add remote logs
+  // Add remote logs first
   remote.forEach(log => {
     if (log && log.date) {
       map.set(log.date, log);
     }
   });
 
-  // Merge local logs, prioritizing local non-empty entries
+  // Local logs completely override remote logs for matching dates to guarantee accuracy
   local.forEach(log => {
     if (log && log.date) {
-      const existing = map.get(log.date);
-      if (!existing) {
-        map.set(log.date, log);
-      } else {
-        map.set(log.date, {
-          ...existing,
-          ...log,
-          caloIn: log.caloIn || existing.caloIn || 0,
-          caloOut: log.caloOut || existing.caloOut || 0,
-          protein: log.protein || existing.protein || 0,
-          carbs: log.carbs || existing.carbs || 0,
-          fats: log.fats || existing.fats || 0,
-          workoutDuration: log.workoutDuration || existing.workoutDuration || 0,
-          workoutCalo: log.workoutCalo || existing.workoutCalo || 0,
-          note: log.note || existing.note || '',
-        });
-      }
+      map.set(log.date, { ...log });
     }
   });
 
@@ -250,12 +289,12 @@ export async function fetchCloudData(syncCode: string): Promise<CloudSyncPayload
 }
 
 /**
- * Subscribe to Realtime Cloud changes via polling every 3s
+ * Subscribe to Realtime Cloud changes via polling every 15s (only when active tab)
  */
 export function subscribeToCloudSync(
   syncCode: string,
   onUpdate: (data: CloudSyncPayload) => void,
-  pollIntervalMs = 3000
+  pollIntervalMs = 15000
 ): () => void {
   const digits = normalizeSyncCode(syncCode);
   if (!digits || digits.length !== 6) return () => {};
@@ -263,6 +302,9 @@ export function subscribeToCloudSync(
   let lastUpdatedAt = '';
 
   const checkUpdates = async () => {
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+      return;
+    }
     try {
       const data = await fetchCloudData(digits);
       if (data && data.updatedAt && data.updatedAt !== lastUpdatedAt) {

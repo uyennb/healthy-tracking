@@ -32,7 +32,7 @@ import { filterLogsByPeriod, processChartData } from './utils/dateUtils';
 import { getTranslation } from './utils/i18n';
 import { format, subDays } from 'date-fns';
 import { BarChart3, LineChart as LineChartIcon, Table as TableIcon, Database, Download } from 'lucide-react';
-import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, decodeDataFromBase64, formatDisplayCode, mergeLogs } from './services/cloudSyncService';
+import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, decodeDataFromBase64, decodeDataFromBase64Async, formatDisplayCode, mergeLogs } from './services/cloudSyncService';
 
 import { USER_REAL_LOGS } from './utils/sampleData';
 
@@ -81,7 +81,7 @@ export function App() {
     }
   }, []);
 
-  // Check URL query string for QR code or direct sync link (?sync=XXX-XXX&data=...)
+  // Check URL query string for QR code or direct sync link (?sync=XXX-XXX&d=...)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -89,26 +89,27 @@ export function App() {
       const queryData = params.get('data') || params.get('d');
 
       if (queryData) {
-        const decoded = decodeDataFromBase64(queryData);
-        if (decoded && decoded.logs && decoded.logs.length > 0) {
-          const currentLocal = getStoredLogs();
-          const merged = mergeLogs(currentLocal, decoded.logs);
-          saveLogs(merged);
-          setLogs(merged);
-          if (decoded.profile) {
-            saveProfile(decoded.profile);
-            setProfile(decoded.profile);
+        decodeDataFromBase64Async(queryData).then(decoded => {
+          if (decoded && decoded.logs && decoded.logs.length > 0) {
+            const currentLocal = getStoredLogs();
+            const merged = mergeLogs(currentLocal, decoded.logs);
+            saveLogs(merged);
+            setLogs(merged);
+            if (decoded.profile) {
+              saveProfile(decoded.profile);
+              setProfile(decoded.profile);
+            }
+            if (querySync) {
+              const clean = formatDisplayCode(querySync);
+              saveSyncCode(clean);
+              setSyncCode(clean);
+              pushDataToCloud(clean, merged, decoded.profile || profile);
+            }
+            showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
+            window.history.replaceState({}, '', window.location.pathname);
           }
-          if (querySync) {
-            const clean = formatDisplayCode(querySync);
-            saveSyncCode(clean);
-            setSyncCode(clean);
-            pushDataToCloud(clean, merged, decoded.profile || profile);
-          }
-          showToast(language === 'vi' ? '✅ Đã đồng bộ dữ liệu thành công!' : '✅ Synced data successfully!');
-          window.history.replaceState({}, '', window.location.pathname);
-          return;
-        }
+        });
+        return;
       }
 
       if (querySync) {

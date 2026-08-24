@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldCheck, Zap, Link } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import { Language, DailyLog, UserProfile } from '../../types/health';
@@ -9,7 +9,7 @@ import {
   normalizeSyncCode,
   pushDataToCloud,
   fetchCloudData,
-  encodeDataToBase64,
+  encodeDataToBase64Async,
 } from '../../services/cloudSyncService';
 
 /**
@@ -96,14 +96,30 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [showQR, setShowQR] = useState(false);
 
-  if (!isOpen) return null;
+  const [qrUrl, setQrUrl] = useState('');
 
   const isVI = language === 'vi';
   const displayCode = formatDisplayCode(syncCode);
 
-  // Build clean, lightweight 1-click sync URL (~30 chars) to ensure zero phone lag & instant QR scanning
-  const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
-  const qrUrl = displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl;
+  useEffect(() => {
+    let isMounted = true;
+    const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
+    if (displayCode && logs && logs.length > 0) {
+      encodeDataToBase64Async(logs, profile).then(compressed => {
+        if (isMounted) {
+          const link = compressed
+            ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}&d=${compressed}`
+            : `${currentUrl}?sync=${encodeURIComponent(displayCode)}`;
+          setQrUrl(link);
+        }
+      });
+    } else {
+      setQrUrl(displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl);
+    }
+    return () => { isMounted = false; };
+  }, [displayCode, logs, profile]);
+
+  if (!isOpen) return null;
 
   const handleManualPush = async () => {
     if (!syncCode) return;
