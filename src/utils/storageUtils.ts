@@ -1,11 +1,15 @@
 import { DailyLog, UserGoals, UserProfile, Language } from '../types/health';
 import { generateSampleData } from './sampleData';
 
-const LOGS_STORAGE_KEY = 'nutrifit_daily_logs_v1';
+const LOGS_STORAGE_KEY = 'nutrifit_daily_logs_v2';
+const LEGACY_LOGS_KEY = 'nutrifit_daily_logs_v1';
 const GOALS_STORAGE_KEY = 'nutrifit_user_goals_v1';
-const PROFILE_STORAGE_KEY = 'nutrifit_user_profile_v1';
+const PROFILE_STORAGE_KEY = 'nutrifit_user_profile_v2';
+const LEGACY_PROFILE_KEY = 'nutrifit_user_profile_v1';
 const LANGUAGE_STORAGE_KEY = 'nutrifit_language_v1';
 const SYNC_CODE_STORAGE_KEY = 'nutrifit_sync_code_v1';
+const DEVICE_ID_STORAGE_KEY = 'nutrifit_device_id_v1';
+const LAST_SYNC_TIME_KEY = 'nutrifit_last_sync_time_v1';
 
 export const DEFAULT_GOALS: UserGoals = {
   targetCaloIn: 2200,
@@ -17,12 +21,35 @@ export const DEFAULT_GOALS: UserGoals = {
   targetWorkoutMinutes: 45,
 };
 
-const REAL_DATA_MIGRATION_KEY = 'nutrifit_migrated_v6_clean';
+/**
+ * Get or generate persistent unique device ID
+ */
+export function getDeviceId(): string {
+  try {
+    let id = localStorage.getItem(DEVICE_ID_STORAGE_KEY);
+    if (!id) {
+      id = `dev-${Math.random().toString(36).substring(2, 9)}-${Date.now().toString(36)}`;
+      localStorage.setItem(DEVICE_ID_STORAGE_KEY, id);
+    }
+    return id;
+  } catch {
+    return 'dev-fallback-unknown';
+  }
+}
 
+/**
+ * Sanitize log object and ensure robust ISO timestamps
+ */
 export function sanitizeLog(log: any): DailyLog | null {
   if (!log || typeof log !== 'object') return null;
   const date = String(log.date || '').trim();
   if (!date || !date.match(/^\d{4}-\d{2}-\d{2}$/)) return null;
+
+  const baselineTime = '2026-08-20T00:00:00.000Z';
+  const createdAt = log.createdAt && typeof log.createdAt === 'string' ? log.createdAt : baselineTime;
+  const updatedAt = log.updatedAt && typeof log.updatedAt === 'string' ? log.updatedAt : createdAt;
+  const deletedAt = log.deletedAt && typeof log.deletedAt === 'string' ? log.deletedAt : null;
+  const deviceId = log.deviceId && typeof log.deviceId === 'string' ? log.deviceId : undefined;
 
   return {
     id: String(log.id || `log-${date}-${Math.random().toString(36).substring(2, 7)}`),
@@ -36,85 +63,209 @@ export function sanitizeLog(log: any): DailyLog | null {
     workoutDuration: Math.max(0, Number(log.workoutDuration) || 0),
     workoutCalo: Math.max(0, Number(log.workoutCalo) || 0),
     note: String(log.note || ''),
+    createdAt,
+    updatedAt,
+    deletedAt,
+    deviceId,
   };
 }
 
-export function getStoredLogs(): DailyLog[] {
+/**
+ * Get raw stored logs including tombstoned records (used for conflict resolution)
+ */
+export function getAllStoredLogsWithTombstones(): DailyLog[] {
   try {
-    const raw = localStorage.getItem(LOGS_STORAGE_KEY);
-    if (!raw) {
-      const realLogs = generateSampleData(10);
-      saveLogs(realLogs);
-      return realLogs;
-    }
-    const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
-      const valid = parsed.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
-      if (valid.length > 0) {
-        return valid.sort((a, b) => String(b.date).localeCompare(String(a.date)));
+    let raw = localStorage.getItem(LOGS_STORAGE_KEY);
+
+    // Migration from v1 storage key if v2 not found
+    if (raw === null) {
+      const legacyRaw = localStorage.getItem(LEGACY_LOGS_KEY);
+      if (legacyRaw !== null) {
+        try {
+          const parsedLegacy = JSON.parse(legacyRaw);
+          if (Array.isArray(parsedLegacy)) {
+            const now = new Date().toISOString();
+            const migrated = parsedLegacy.map(l => ({
+              ...l,
+              createdAt: l.createdAt || now,
+              updatedAt: l.updatedAt || now,
+              deletedAt: null,
+            })).map(sanitizeLog).filter((l): l is DailyLog => l !== null);
+            localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(migrated));
+            return migrated;
+          }
+        } catch {}
       }
+
+      // If completely fresh user with no existing storage key, initialize sample data
+      const now = new Date().toISOString();
+      const initial = generateSampleData(10).map(l => ({
+        ...l,
+        createdAt: now,
+        updatedAt: now,
+        deletedAt: null,
+      }));
+      localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(initial));
+      return initial;
     }
-    const realLogs = generateSampleData(10);
-    saveLogs(realLogs);
-    return realLogs;
+
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return parsed.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
+    }
+    return [];
   } catch (err) {
     console.error('Error reading logs from LocalStorage', err);
-    return generateSampleData(10);
+    return [];
   }
 }
 
-export function saveLogs(logs: DailyLog[]): void {
+/**
+ * Get active non-deleted logs for UI display
+ */
+export function getStoredLogs(): DailyLog[] {
+  const allLogs = getAllStoredLogsWithTombstones();
+  return allLogs
+    .filter(l => !l.deletedAt)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+}
+
+/**
+ * Save full logs array (including tombstones) to LocalStorage
+ */
+export function saveLogsWithTombstones(logs: DailyLog[]): void {
   try {
     const safeLogs = Array.isArray(logs) ? logs : [];
     const valid = safeLogs.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
-    const sorted = valid.sort((a, b) => String(b.date).localeCompare(String(a.date)));
-    localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(sorted));
+    localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(valid));
   } catch (err) {
     console.error('Error saving logs to LocalStorage', err);
   }
 }
 
+/**
+ * Save active logs list (preserves existing tombstones in storage)
+ */
+export function saveLogs(activeLogs: DailyLog[]): void {
+  try {
+    const existing = getAllStoredLogsWithTombstones();
+    const tombstones = existing.filter(l => l.deletedAt);
+
+    // Combine active logs and existing tombstones
+    const map = new Map<string, DailyLog>();
+    tombstones.forEach(t => map.set(t.date, t));
+    activeLogs.forEach(a => map.set(a.date, a));
+
+    saveLogsWithTombstones(Array.from(map.values()));
+  } catch (err) {
+    console.error('Error saving logs to LocalStorage', err);
+  }
+}
+
+/**
+ * Add or update a single daily log with accurate updatedAt timestamp
+ */
 export function upsertLog(newLog: Omit<DailyLog, 'id'> & { id?: string }): DailyLog[] {
-  const currentLogs = getStoredLogs();
-  const existingIndex = currentLogs.findIndex(l => l.date === newLog.date || (newLog.id && l.id === newLog.id));
+  const allLogs = getAllStoredLogsWithTombstones();
+  const now = new Date().toISOString();
+  const devId = getDeviceId();
 
-  let updatedLogs: DailyLog[];
-  const finalId = newLog.id || `log-${newLog.date}-${Date.now()}`;
-  const fullLog: DailyLog = { ...newLog, id: finalId };
+  const existingIndex = allLogs.findIndex(l => l.date === newLog.date || (newLog.id && l.id === newLog.id));
 
+  const finalId = newLog.id || `log-${newLog.date}-${Date.now().toString(36)}`;
+  const createdAt = existingIndex >= 0 ? (allLogs[existingIndex].createdAt || now) : now;
+
+  const fullLog: DailyLog = {
+    ...newLog,
+    id: finalId,
+    createdAt,
+    updatedAt: now,
+    deletedAt: null,
+    deviceId: devId,
+  };
+
+  const sanitized = sanitizeLog(fullLog);
+  if (!sanitized) return getStoredLogs();
+
+  let updatedAll: DailyLog[];
   if (existingIndex >= 0) {
-    updatedLogs = [...currentLogs];
-    updatedLogs[existingIndex] = fullLog;
+    updatedAll = [...allLogs];
+    updatedAll[existingIndex] = sanitized;
   } else {
-    updatedLogs = [fullLog, ...currentLogs];
+    updatedAll = [sanitized, ...allLogs];
   }
 
-  saveLogs(updatedLogs);
+  saveLogsWithTombstones(updatedAll);
   return getStoredLogs();
 }
 
-export function deleteLog(id: string): DailyLog[] {
-  const currentLogs = getStoredLogs();
-  const filtered = currentLogs.filter(l => l.id !== id);
-  saveLogs(filtered);
+/**
+ * Safe multi-device deletion by applying tombstone (deletedAt)
+ */
+export function deleteLog(idOrDate: string): DailyLog[] {
+  const allLogs = getAllStoredLogsWithTombstones();
+  const now = new Date().toISOString();
+  const devId = getDeviceId();
+
+  const updatedAll = allLogs.map(l => {
+    if (l.id === idOrDate || l.date === idOrDate) {
+      return {
+        ...l,
+        updatedAt: now,
+        deletedAt: now,
+        deviceId: devId,
+      };
+    }
+    return l;
+  });
+
+  saveLogsWithTombstones(updatedAll);
   return getStoredLogs();
 }
 
 export function resetToSampleData(): DailyLog[] {
-  const samples = generateSampleData(8);
-  saveLogs(samples);
+  const now = new Date().toISOString();
+  const samples = generateSampleData(8).map(l => ({
+    ...l,
+    createdAt: now,
+    updatedAt: now,
+    deletedAt: null,
+  }));
+  saveLogsWithTombstones(samples);
   return samples;
 }
 
 export function clearAllLogs(): DailyLog[] {
-  saveLogs([]);
+  const now = new Date().toISOString();
+  const existing = getAllStoredLogsWithTombstones();
+  const tombstones = existing.map(l => ({
+    ...l,
+    updatedAt: now,
+    deletedAt: now,
+    deviceId: getDeviceId(),
+  }));
+  saveLogsWithTombstones(tombstones);
   return [];
 }
 
 export function getStoredProfile(): UserProfile {
   try {
-    const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
+    const raw = localStorage.getItem(PROFILE_STORAGE_KEY) || localStorage.getItem(LEGACY_PROFILE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        return {
+          name: parsed.name || 'Bảo Uyên',
+          gender: parsed.gender || 'female',
+          birthDate: parsed.birthDate || '1998-05-15',
+          height: Number(parsed.height) || 162,
+          weight: Number(parsed.weight) || 54,
+          avatarUrl: parsed.avatarUrl,
+          updatedAt: parsed.updatedAt || '2026-08-20T00:00:00.000Z',
+          deviceId: parsed.deviceId,
+        };
+      }
+    }
   } catch {}
   return {
     name: 'Bảo Uyên',
@@ -122,12 +273,18 @@ export function getStoredProfile(): UserProfile {
     birthDate: '1998-05-15',
     height: 162,
     weight: 54,
+    updatedAt: '2026-08-20T00:00:00.000Z',
   };
 }
 
 export function saveProfile(profile: UserProfile): void {
   try {
-    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profile));
+    const profileWithMeta: UserProfile = {
+      ...profile,
+      updatedAt: profile.updatedAt || new Date().toISOString(),
+      deviceId: profile.deviceId || getDeviceId(),
+    };
+    localStorage.setItem(PROFILE_STORAGE_KEY, JSON.stringify(profileWithMeta));
   } catch {}
 }
 
@@ -165,6 +322,20 @@ export function clearSyncCode(): void {
   } catch {}
 }
 
+export function getLastSyncTime(): string | null {
+  try {
+    return localStorage.getItem(LAST_SYNC_TIME_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveLastSyncTime(isoTime: string): void {
+  try {
+    localStorage.setItem(LAST_SYNC_TIME_KEY, isoTime);
+  } catch {}
+}
+
 export function exportLogsToJSON(logs: DailyLog[]): void {
   const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(logs, null, 2));
   const downloadAnchor = document.createElement('a');
@@ -178,7 +349,7 @@ export function exportLogsToJSON(logs: DailyLog[]): void {
 export function exportFullBackup(logs: DailyLog[], profile: UserProfile): void {
   const backupObj = {
     app: 'NutriFit',
-    version: '2.0',
+    version: '3.0',
     exportDate: new Date().toISOString(),
     logs,
     profile,
@@ -206,7 +377,8 @@ export function importFullBackup(jsonStr: string): { logs?: DailyLog[]; profile?
     }
 
     if (logs && logs.length > 0) {
-      return { logs, profile };
+      const sanitized = logs.map(sanitizeLog).filter((l): l is DailyLog => l !== null);
+      return { logs: sanitized, profile };
     }
     return null;
   } catch (err) {

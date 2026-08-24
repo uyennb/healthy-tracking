@@ -6,10 +6,14 @@ export interface DailyLog {
   carbs: number; // grams
   fats: number; // grams
   fiber: number; // grams
-  workoutDuration: number; // minutes
+  workoutDuration: number; // seconds
   workoutCalo: number; // kcal
   caloOut: number; // TDEE in kcal
   note?: string;
+  createdAt?: string; // ISO 8601 format
+  updatedAt?: string; // ISO 8601 format
+  deletedAt?: string | null; // ISO 8601 format tombstone
+  deviceId?: string;
 }
 
 export type PeriodType = 'all' | 'week' | 'month' | 'quarter' | 'year' | 'custom';
@@ -17,6 +21,8 @@ export type PeriodType = 'all' | 'week' | 'month' | 'quarter' | 'year' | 'custom
 export type DisplayMode = 'bar' | 'line' | 'table';
 
 export type ChartCategory = 'nutrition' | 'energy' | 'workout';
+
+export type SyncStatus = 'synced' | 'syncing' | 'pending' | 'error';
 
 export interface CustomDateRange {
   startDate: string;
@@ -57,5 +63,6 @@ export interface UserProfile {
   birthDate: string; // YYYY-MM-DD
   height: number; // cm
   weight: number; // kg
+  updatedAt?: string; // ISO 8601 format
+  deviceId?: string;
 }
-

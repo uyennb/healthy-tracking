@@ -12,9 +12,11 @@ import { DataManagementModal } from './components/settings/DataManagementModal';
 import { CloudSyncModal } from './components/settings/CloudSyncModal';
 import { ProfileView } from './components/profile/ProfileView';
 
-import { DailyLog, PeriodType, DisplayMode, ChartCategory, CustomDateRange, UserProfile, Language } from './types/health';
+import { DailyLog, PeriodType, DisplayMode, ChartCategory, CustomDateRange, UserProfile, Language, SyncStatus } from './types/health';
 import {
   getStoredLogs,
+  getAllStoredLogsWithTombstones,
+  saveLogsWithTombstones,
   upsertLog,
   deleteLog,
   resetToSampleData,
@@ -27,20 +29,32 @@ import {
   getStoredSyncCode,
   saveSyncCode,
   clearSyncCode,
+  getLastSyncTime,
+  saveLastSyncTime,
 } from './utils/storageUtils';
 import { filterLogsByPeriod, processChartData } from './utils/dateUtils';
 import { getTranslation } from './utils/i18n';
 import { format, subDays } from 'date-fns';
 import { BarChart3, LineChart as LineChartIcon, Table as TableIcon, Database, Download } from 'lucide-react';
-import { pushDataToCloud, subscribeToCloudSync, fetchCloudData, decodeDataFromBase64, decodeDataFromBase64Async, formatDisplayCode, mergeLogs, mergeProfiles } from './services/cloudSyncService';
-
-import { USER_REAL_LOGS } from './utils/sampleData';
+import {
+  pushDataToCloud,
+  subscribeToCloudSync,
+  fetchCloudData,
+  syncOnStartup,
+  decodeDataFromBase64,
+  decodeDataFromBase64Async,
+  formatDisplayCode,
+  mergeLogsConflictSafe,
+  mergeProfilesConflictSafe,
+} from './services/cloudSyncService';
 
 export function App() {
   const [logs, setLogs] = useState<DailyLog[]>([]);
   const [profile, setProfile] = useState<UserProfile>(getStoredProfile());
   const [language, setLanguage] = useState<Language>(getStoredLanguage());
   const [syncCode, setSyncCode] = useState<string>(getStoredSyncCode());
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('synced');
+  const [lastSyncTime, setLastSyncTime] = useState<string | null>(getLastSyncTime());
 
   const [period, setPeriod] = useState<PeriodType>('all');
   const [customRange, setCustomRange] = useState<CustomDateRange>({
@@ -58,7 +72,6 @@ export function App() {
   const [isSyncModalOpen, setIsSyncModalOpen] = useState<boolean>(false);
 
   const [toastMsg, setToastMsg] = useState<string>('');
-  const lastLocalUpdateRef = React.useRef<number>(0);
 
   const showToast = (msg: string) => {
     setToastMsg(msg);
@@ -67,7 +80,7 @@ export function App() {
 
   const t = getTranslation(language);
 
-  // Load initial local data & auto-push to cloud if syncCode is active
+  // 1. Initial Startup Flow: Read local storage first, then run conflict-safe sync if syncCode is set
   useEffect(() => {
     const loadedLogs = getStoredLogs();
     const storedProfile = getStoredProfile();
@@ -76,12 +89,26 @@ export function App() {
     setLanguage(getStoredLanguage());
 
     const currentSyncCode = getStoredSyncCode();
-    if (currentSyncCode && loadedLogs && loadedLogs.length > 0) {
-      pushDataToCloud(currentSyncCode, loadedLogs, storedProfile);
+    if (currentSyncCode) {
+      setSyncStatus('syncing');
+      syncOnStartup(currentSyncCode, getAllStoredLogsWithTombstones(), storedProfile).then(result => {
+        setLogs(result.logs);
+        setProfile(result.profile);
+        setSyncStatus(result.status);
+        if (result.status === 'synced') {
+          const nowIso = new Date().toISOString();
+          setLastSyncTime(nowIso);
+          saveLastSyncTime(nowIso);
+        }
+      }).catch(() => {
+        setSyncStatus('error');
+      });
+    } else {
+      setSyncStatus('pending');
     }
   }, []);
 
-  // Check URL query string ONLY for direct 1-click sync link containing data payload (?sync=XXX-XXX&d=PAYLOAD)
+  // 2. Check URL query string for direct 1-click sync link (?sync=XXX-XXX&d=PAYLOAD)
   useEffect(() => {
     if (typeof window !== 'undefined') {
       const params = new URLSearchParams(window.location.search);
@@ -91,12 +118,13 @@ export function App() {
       if (queryData) {
         const decoded = decodeDataFromBase64(queryData);
         if (decoded && decoded.logs && decoded.logs.length > 0) {
-          const currentLocal = getStoredLogs();
-          const merged = mergeLogs(currentLocal, decoded.logs);
-          saveLogs(merged);
-          setLogs(merged);
+          const currentLocal = getAllStoredLogsWithTombstones();
+          const mergedLogs = mergeLogsConflictSafe(currentLocal, decoded.logs);
+          saveLogsWithTombstones(mergedLogs);
+          setLogs(mergedLogs.filter(l => !l.deletedAt));
+
           const currentProfile = getStoredProfile();
-          const mergedProf = mergeProfiles(currentProfile, decoded.profile);
+          const mergedProf = mergeProfilesConflictSafe(currentProfile, decoded.profile);
           saveProfile(mergedProf);
           setProfile(mergedProf);
 
@@ -104,6 +132,7 @@ export function App() {
             const clean = formatDisplayCode(querySync);
             saveSyncCode(clean);
             setSyncCode(clean);
+            pushDataToCloud(clean, mergedLogs, mergedProf);
           }
           showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
           window.history.replaceState({}, '', window.location.pathname);
@@ -112,12 +141,13 @@ export function App() {
 
         decodeDataFromBase64Async(queryData).then(asyncDecoded => {
           if (asyncDecoded && asyncDecoded.logs && asyncDecoded.logs.length > 0) {
-            const currentLocal = getStoredLogs();
-            const merged = mergeLogs(currentLocal, asyncDecoded.logs);
-            saveLogs(merged);
-            setLogs(merged);
+            const currentLocal = getAllStoredLogsWithTombstones();
+            const mergedLogs = mergeLogsConflictSafe(currentLocal, asyncDecoded.logs);
+            saveLogsWithTombstones(mergedLogs);
+            setLogs(mergedLogs.filter(l => !l.deletedAt));
+
             const currentProfile = getStoredProfile();
-            const mergedProf = mergeProfiles(currentProfile, asyncDecoded.profile);
+            const mergedProf = mergeProfilesConflictSafe(currentProfile, asyncDecoded.profile);
             saveProfile(mergedProf);
             setProfile(mergedProf);
 
@@ -125,6 +155,7 @@ export function App() {
               const clean = formatDisplayCode(querySync);
               saveSyncCode(clean);
               setSyncCode(clean);
+              pushDataToCloud(clean, mergedLogs, mergedProf);
             }
             showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
             window.history.replaceState({}, '', window.location.pathname);
@@ -137,18 +168,21 @@ export function App() {
         const clean = formatDisplayCode(querySync);
         saveSyncCode(clean);
         setSyncCode(clean);
+        setSyncStatus('syncing');
+        syncOnStartup(clean, getAllStoredLogsWithTombstones(), getStoredProfile()).then(result => {
+          setLogs(result.logs);
+          setProfile(result.profile);
+          setSyncStatus(result.status);
+          if (result.status === 'synced') {
+            const nowIso = new Date().toISOString();
+            setLastSyncTime(nowIso);
+            saveLastSyncTime(nowIso);
+          }
+        });
         window.history.replaceState({}, '', window.location.pathname);
       }
     }
   }, []);
-
-  // Helper to auto-push local updates to Cloud
-  const autoPushCloud = (newLogs: DailyLog[], newProfile: UserProfile = profile) => {
-    lastLocalUpdateRef.current = Date.now();
-    if (syncCode) {
-      pushDataToCloud(syncCode, newLogs, newProfile);
-    }
-  };
 
   const filteredLogs = useMemo(() => {
     return filterLogsByPeriod(logs, period, customRange);
@@ -158,45 +192,86 @@ export function App() {
     return processChartData(filteredLogs);
   }, [filteredLogs]);
 
+  // Handle Save (Add/Edit) Log: immediate local save with updatedAt, then conflict-safe cloud push
   const handleSaveLog = (logData: Omit<DailyLog, 'id'> & { id?: string }) => {
-    lastLocalUpdateRef.current = Date.now();
     const updated = upsertLog(logData);
     setLogs(updated);
     setEditingLog(null);
-    autoPushCloud(updated, profile);
 
     const dateFormatted = logData.date ? logData.date.split('-').reverse().join('/') : '';
     showToast(language === 'vi' ? `✅ Đã lưu nhật ký ngày ${dateFormatted} thành công!` : `✅ Saved daily log for ${dateFormatted}!`);
+
+    if (syncCode) {
+      setSyncStatus('syncing');
+      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profile).then(success => {
+        if (success) {
+          setSyncStatus('synced');
+          const nowIso = new Date().toISOString();
+          setLastSyncTime(nowIso);
+          saveLastSyncTime(nowIso);
+        } else {
+          setSyncStatus('error');
+        }
+      }).catch(() => setSyncStatus('error'));
+    }
   };
 
+  // Handle Delete Log: immediate local tombstone with deletedAt, then cloud push
   const handleDeleteLog = (id: string) => {
     const updated = deleteLog(id);
     setLogs(updated);
-    autoPushCloud(updated, profile);
+
+    if (syncCode) {
+      setSyncStatus('syncing');
+      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profile).then(success => {
+        if (success) {
+          setSyncStatus('synced');
+          const nowIso = new Date().toISOString();
+          setLastSyncTime(nowIso);
+          saveLastSyncTime(nowIso);
+        } else {
+          setSyncStatus('error');
+        }
+      }).catch(() => setSyncStatus('error'));
+    }
   };
 
   const handleQuickReset = () => {
     const resetLogs = resetToSampleData();
-    setLogs(resetLogs);
-    autoPushCloud(resetLogs, profile);
+    setLogs(resetLogs.filter(l => !l.deletedAt));
+    if (syncCode) {
+      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profile);
+    }
   };
 
   const handleClearAll = () => {
     const cleared = clearAllLogs();
     setLogs(cleared);
-    autoPushCloud(cleared, profile);
+    if (syncCode) {
+      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profile);
+    }
   };
 
   const handleImportLogs = (imported: DailyLog[]) => {
-    saveLogs(imported);
-    setLogs(imported);
-    autoPushCloud(imported, profile);
+    const allStored = getAllStoredLogsWithTombstones();
+    const merged = mergeLogsConflictSafe(allStored, imported);
+    saveLogsWithTombstones(merged);
+    setLogs(merged.filter(l => !l.deletedAt));
+    if (syncCode) {
+      pushDataToCloud(syncCode, merged, profile);
+    }
   };
 
   const handleSaveProfile = (updatedProfile: UserProfile) => {
-    saveProfile(updatedProfile);
-    setProfile(updatedProfile);
-    autoPushCloud(logs, updatedProfile);
+    const profileWithMeta: UserProfile = {
+      ...updatedProfile,
+      updatedAt: new Date().toISOString(),
+    };
+    saveProfile(profileWithMeta);
+    setProfile(profileWithMeta);
+    if (syncCode) {
+      pushDataToCloud(syncCode, getAllStoredLogsWithTombstones(), profileWithMeta);
+    }
   };
 
   const handleChangeLanguage = (newLang: Language) => {
@@ -208,25 +283,45 @@ export function App() {
     saveSyncCode(code);
     setSyncCode(code);
 
-    const currentLocal = getStoredLogs();
     if (cloudData && cloudData.logs && cloudData.logs.length > 0) {
-      const merged = mergeLogs(currentLocal, cloudData.logs);
-      saveLogs(merged);
-      setLogs(merged);
-      const targetProfile = cloudData.profile || profile;
-      if (cloudData.profile) {
-        saveProfile(cloudData.profile);
-        setProfile(cloudData.profile);
-      }
-      pushDataToCloud(code, merged, targetProfile);
+      const currentLocal = getAllStoredLogsWithTombstones();
+      const mergedLogs = mergeLogsConflictSafe(currentLocal, cloudData.logs);
+      saveLogsWithTombstones(mergedLogs);
+      setLogs(mergedLogs.filter(l => !l.deletedAt));
+
+      const currentProfile = getStoredProfile();
+      const mergedProf = mergeProfilesConflictSafe(currentProfile, cloudData.profile);
+      saveProfile(mergedProf);
+      setProfile(mergedProf);
+
+      setSyncStatus('syncing');
+      pushDataToCloud(code, mergedLogs, mergedProf).then(success => {
+        setSyncStatus(success ? 'synced' : 'pending');
+        if (success) {
+          const nowIso = new Date().toISOString();
+          setLastSyncTime(nowIso);
+          saveLastSyncTime(nowIso);
+        }
+      });
     } else {
-      pushDataToCloud(code, currentLocal, profile);
+      setSyncStatus('syncing');
+      syncOnStartup(code, getAllStoredLogsWithTombstones(), getStoredProfile()).then(result => {
+        setLogs(result.logs);
+        setProfile(result.profile);
+        setSyncStatus(result.status);
+        if (result.status === 'synced') {
+          const nowIso = new Date().toISOString();
+          setLastSyncTime(nowIso);
+          saveLastSyncTime(nowIso);
+        }
+      });
     }
   };
 
   const handleDisconnectSync = () => {
     clearSyncCode();
     setSyncCode('');
+    setSyncStatus('pending');
   };
 
   const handleEditClick = (log: DailyLog) => {
@@ -256,6 +351,7 @@ export function App() {
         language={language}
         onChangeLanguage={handleChangeLanguage}
         syncCode={syncCode}
+        syncStatus={syncStatus}
         onOpenCloudSync={() => setIsSyncModalOpen(true)}
       />
 
@@ -283,99 +379,54 @@ export function App() {
               language={language}
             />
 
-            {/* Display Mode & Category Control Bar */}
-            <div className="bg-white rounded-2xl p-3 shadow-sm border border-slate-100 mb-4 flex flex-wrap items-center justify-between gap-2">
-              {/* Display Mode Selector (Bảng, Cột, Đường) */}
-              <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-xl">
-                <span className="text-[10px] font-bold text-slate-500 px-2 uppercase">{t.displayTitle}</span>
+            {/* Metric Summary Cards */}
+            <SummaryCards logs={filteredLogs} language={language} />
+
+            {/* Display Mode Selection: Charts vs Table */}
+            <div className="flex items-center justify-between mt-6 mb-3 px-1">
+              <span className="text-xs font-black text-slate-400 uppercase tracking-wider">
+                {t.displayTitle}
+              </span>
+
+              <div className="flex items-center gap-1 bg-white p-1 rounded-xl shadow-xs border border-slate-100">
                 <button
                   onClick={() => setDisplayMode('bar')}
-                  className={`flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg transition ${
+                  className={`p-1.5 rounded-lg transition ${
                     displayMode === 'bar'
-                      ? 'bg-white text-emerald-600 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-emerald-500 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-600'
                   }`}
+                  title={t.modeBar}
                 >
-                  <BarChart3 className="w-3.5 h-3.5" />
-                  <span>{t.modeBar}</span>
+                  <BarChart3 className="w-4 h-4" />
                 </button>
-
                 <button
                   onClick={() => setDisplayMode('line')}
-                  className={`flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg transition ${
+                  className={`p-1.5 rounded-lg transition ${
                     displayMode === 'line'
-                      ? 'bg-white text-emerald-600 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800'
+                      ? 'bg-emerald-500 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-600'
                   }`}
+                  title={t.modeLine}
                 >
-                  <LineChartIcon className="w-3.5 h-3.5" />
-                  <span>{t.modeLine}</span>
-                </button>
-
-                <button
-                  onClick={() => {
-                    setDisplayMode('table');
-                    setActiveTab('table');
-                  }}
-                  className={`flex items-center gap-1 text-xs font-bold px-2.5 py-1 rounded-lg transition ${
-                    activeTab === 'table' || displayMode === 'table'
-                      ? 'bg-white text-emerald-600 shadow-sm'
-                      : 'text-slate-500 hover:text-slate-800'
-                  }`}
-                >
-                  <TableIcon className="w-3.5 h-3.5" />
-                  <span>{t.modeTable}</span>
-                </button>
-              </div>
-
-              {/* Group Category Filter Tabs */}
-              <div className="flex items-center gap-1 overflow-x-auto py-0.5 max-w-full">
-                <button
-                  onClick={() => setChartCategory('all')}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition whitespace-nowrap ${
-                    chartCategory === 'all'
-                      ? 'bg-emerald-500 text-white shadow-sm shadow-emerald-500/20'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {t.catAll}
+                  <LineChartIcon className="w-4 h-4" />
                 </button>
                 <button
-                  onClick={() => setChartCategory('nutrition')}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition whitespace-nowrap ${
-                    chartCategory === 'nutrition'
-                      ? 'bg-blue-600 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                  onClick={() => setDisplayMode('table')}
+                  className={`p-1.5 rounded-lg transition ${
+                    displayMode === 'table'
+                      ? 'bg-emerald-500 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-slate-600'
                   }`}
+                  title={t.modeTable}
                 >
-                  {t.catNutrition}
-                </button>
-                <button
-                  onClick={() => setChartCategory('energy')}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition whitespace-nowrap ${
-                    chartCategory === 'energy'
-                      ? 'bg-indigo-600 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {t.catEnergy}
-                </button>
-                <button
-                  onClick={() => setChartCategory('workout')}
-                  className={`text-[11px] font-bold px-2.5 py-1 rounded-lg transition whitespace-nowrap ${
-                    chartCategory === 'workout'
-                      ? 'bg-purple-600 text-white shadow-sm'
-                      : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
-                  }`}
-                >
-                  {t.catWorkout}
+                  <TableIcon className="w-4 h-4" />
                 </button>
               </div>
             </div>
 
-            {/* Dynamic Main View Content */}
-            {activeTab === 'table' ? (
-              /* Table View Tab */
+            {/* Visual Charts or Log Data Table */}
+            {displayMode === 'table' ? (
               <LogDataTable
                 logs={filteredLogs}
                 onEdit={handleEditClick}
@@ -383,68 +434,79 @@ export function App() {
                 language={language}
               />
             ) : (
-              /* Dashboard & Charts Tab */
               <div className="space-y-4">
-                {/* KPI Summary Cards */}
-                <SummaryCards logs={filteredLogs} language={language} />
+                {/* Category Filter for Charts */}
+                <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                  <button
+                    onClick={() => setChartCategory('all')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                      chartCategory === 'all'
+                        ? 'bg-slate-800 text-white shadow-sm'
+                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
+                    }`}
+                  >
+                    {t.catAll}
+                  </button>
+                  <button
+                    onClick={() => setChartCategory('nutrition')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                      chartCategory === 'nutrition'
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
+                    }`}
+                  >
+                    {t.catNutrition}
+                  </button>
+                  <button
+                    onClick={() => setChartCategory('energy')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                      chartCategory === 'energy'
+                        ? 'bg-emerald-600 text-white shadow-sm'
+                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
+                    }`}
+                  >
+                    {t.catEnergy}
+                  </button>
+                  <button
+                    onClick={() => setChartCategory('workout')}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                      chartCategory === 'workout'
+                        ? 'bg-indigo-600 text-white shadow-sm'
+                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
+                    }`}
+                  >
+                    {t.catWorkout}
+                  </button>
+                </div>
 
-                {/* Group 1: Nutrition breakdown chart */}
+                {/* Render Selected Charts */}
                 {(chartCategory === 'all' || chartCategory === 'nutrition') && (
-                  <NutritionChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} language={language} />
+                  <NutritionChart data={chartData} mode={displayMode} language={language} />
                 )}
-
-                {/* Group 2: Calo-In vs Calo-Out (TDEE) chart */}
                 {(chartCategory === 'all' || chartCategory === 'energy') && (
-                  <EnergyBalanceChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} language={language} />
+                  <EnergyBalanceChart data={chartData} mode={displayMode} language={language} />
                 )}
-
-                {/* Group 3: Workout duration & calories burned chart */}
                 {(chartCategory === 'all' || chartCategory === 'workout') && (
-                  <WorkoutChart data={chartData} mode={displayMode === 'table' ? 'bar' : displayMode} language={language} />
+                  <WorkoutChart data={chartData} mode={displayMode} language={language} />
                 )}
-
-                {/* Detailed Data Table inside Dashboard View */}
-                <LogDataTable
-                  logs={filteredLogs}
-                  onEdit={handleEditClick}
-                  onDelete={handleDeleteLog}
-                  language={language}
-                />
               </div>
             )}
-
-            {/* Data Management & Sync Footer Card */}
-            <div className="bg-white rounded-2xl p-3.5 shadow-sm border border-slate-100 mt-4 mb-2 flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Database className="w-4 h-4 text-emerald-600" />
-                <span className="font-extrabold text-slate-800 text-xs">
-                  {language === 'vi' ? 'Quản lý Dữ liệu App (Xuất CSV/JSON)' : 'App Data Management (CSV/JSON)'}
-                </span>
-              </div>
-              <button
-                onClick={() => setIsDataModalOpen(true)}
-                className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 transition active:scale-95"
-              >
-                <Download className="w-3.5 h-3.5 text-emerald-600" />
-                <span>{t.navData}</span>
-              </button>
-            </div>
           </>
         )}
       </main>
 
-      {/* Mobile Bottom Navigation Bar */}
+      {/* Floating Bottom Navigation */}
       <BottomNav
         activeTab={activeTab}
-        onChangeTab={(tab) => {
-          setActiveTab(tab);
-          if (tab === 'table') setDisplayMode('table');
+        onChangeTab={setActiveTab}
+        onOpenAddModal={() => {
+          setEditingLog(null);
+          setIsAddModalOpen(true);
         }}
-        onOpenAddModal={() => setIsAddModalOpen(true)}
         language={language}
       />
 
-      {/* Daily Input/Edit Modal */}
+      {/* Add / Edit Daily Log Modal */}
       <DailyLogModal
         isOpen={isAddModalOpen}
         onClose={handleCloseModal}
@@ -453,7 +515,7 @@ export function App() {
         language={language}
       />
 
-      {/* Data Management Dialog */}
+      {/* Data Management Modal (Export/Import/Reset) */}
       <DataManagementModal
         isOpen={isDataModalOpen}
         onClose={() => setIsDataModalOpen(false)}
@@ -463,11 +525,13 @@ export function App() {
         onClearAll={handleClearAll}
       />
 
-      {/* Cloud Realtime Sync Dialog */}
+      {/* Multi-Device Realtime Cloud Sync Modal */}
       <CloudSyncModal
         isOpen={isSyncModalOpen}
         onClose={() => setIsSyncModalOpen(false)}
         syncCode={syncCode}
+        syncStatus={syncStatus}
+        lastSyncTime={lastSyncTime}
         onConnectSync={handleConnectSync}
         onDisconnectSync={handleDisconnectSync}
         logs={logs}

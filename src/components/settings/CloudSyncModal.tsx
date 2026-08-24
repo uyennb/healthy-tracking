@@ -1,9 +1,9 @@
 import React, { useState } from 'react';
-import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldCheck, Zap, Link, Download, Upload } from 'lucide-react';
+import { X, Cloud, CloudOff, Copy, Check, QrCode, RefreshCw, ArrowRight, ShieldCheck, Zap, Link, Download, Upload, AlertCircle, CheckCircle2, Clock } from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
-import { Language, DailyLog, UserProfile } from '../../types/health';
+import { Language, DailyLog, UserProfile, SyncStatus } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
-import { exportFullBackup, importFullBackup } from '../../utils/storageUtils';
+import { exportFullBackup, importFullBackup, getAllStoredLogsWithTombstones } from '../../utils/storageUtils';
 import {
   generateNumericSyncCode,
   formatDisplayCode,
@@ -15,13 +15,8 @@ import {
   decodeDataFromBase64Async,
 } from '../../services/cloudSyncService';
 
-/**
- * Robust Dual-Layer Copy function working 100% across Mobile Safari, Chrome iOS, Android & WebViews
- */
 export function copyToClipboard(text: string): boolean {
   if (!text) return false;
-
-  // 1. Synchronous execCommand first to guarantee iOS Safari / Mobile WebView compatibility
   try {
     const textArea = document.createElement('textarea');
     textArea.value = text;
@@ -40,7 +35,6 @@ export function copyToClipboard(text: string): boolean {
     textArea.focus();
     textArea.select();
 
-    // Range selection for iOS Safari
     const range = document.createRange();
     range.selectNodeContents(textArea);
     const selection = window.getSelection();
@@ -57,7 +51,6 @@ export function copyToClipboard(text: string): boolean {
     console.warn('execCommand copy failed:', err);
   }
 
-  // 2. Modern Clipboard API fallback
   if (navigator.clipboard) {
     try {
       navigator.clipboard.writeText(text);
@@ -78,6 +71,8 @@ interface CloudSyncModalProps {
   onDisconnectSync: () => void;
   logs: DailyLog[];
   profile: UserProfile;
+  syncStatus?: SyncStatus;
+  lastSyncTime?: string | null;
   language?: Language;
 }
 
@@ -89,6 +84,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   onDisconnectSync,
   logs,
   profile,
+  syncStatus = 'synced',
+  lastSyncTime,
   language = 'vi',
 }) => {
   const t = getTranslation(language);
@@ -109,17 +106,34 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
 
   if (!isOpen) return null;
 
+  const formatTimeStr = (isoString?: string | null) => {
+    if (!isoString) return isVI ? 'Chưa đồng bộ' : 'Not synced yet';
+    try {
+      const d = new Date(isoString);
+      if (isNaN(d.getTime())) return isoString;
+      return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' ' + d.toLocaleDateString();
+    } catch {
+      return isoString;
+    }
+  };
+
   const handleManualPush = async () => {
     if (!syncCode) return;
     setIsConnecting(true);
     setErrorMsg('');
     try {
-      await pushDataToCloud(syncCode, logs, profile);
+      const allLogs = getAllStoredLogsWithTombstones();
+      const success = await pushDataToCloud(syncCode, allLogs, profile);
       setIsConnecting(false);
-      setPushed(true);
-      setTimeout(() => setPushed(false), 2500);
-    } catch {
+      if (success) {
+        setPushed(true);
+        setTimeout(() => setPushed(false), 2500);
+      } else {
+        setErrorMsg(isVI ? 'Lỗi kết nối máy chủ Cloud. Vui lòng kiểm tra lại mạng.' : 'Cloud connection failed. Please check network.');
+      }
+    } catch (err: any) {
       setIsConnecting(false);
+      setErrorMsg(err?.message || (isVI ? 'Lỗi kết nối máy chủ Cloud.' : 'Cloud server error.'));
     }
   };
 
@@ -148,12 +162,13 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     setErrorMsg('');
     const newCode = generateNumericSyncCode();
     try {
-      const success = await pushDataToCloud(newCode, logs, profile);
+      const allLogs = getAllStoredLogsWithTombstones();
+      const success = await pushDataToCloud(newCode, allLogs, profile);
       setIsConnecting(false);
       if (success) {
         onConnectSync(newCode);
       } else {
-        setErrorMsg(isVI ? 'Không thể tạo mã kết nối Cloud.' : 'Failed to generate sync code.');
+        setErrorMsg(isVI ? 'Không thể tạo mã kết nối Cloud. Vui lòng kiểm tra mạng.' : 'Failed to generate sync code.');
       }
     } catch (err: any) {
       setIsConnecting(false);
@@ -171,7 +186,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     // 1. If user pasted a full URL or direct sync link (?d= or ?data=)
     if (trimmed.includes('d=') || trimmed.includes('data=')) {
       try {
-        const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://healthy-tracking.vercel.app/${trimmed}`);
+        const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://example.com/${trimmed}`);
         const dataParam = urlObj.searchParams.get('d') || urlObj.searchParams.get('data');
         const syncParam = urlObj.searchParams.get('sync');
         if (dataParam) {
@@ -203,7 +218,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
     let codeStr = trimmed;
     if (trimmed.includes('sync=')) {
       try {
-        const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://healthy-tracking.vercel.app/${trimmed}`);
+        const urlObj = new URL(trimmed.startsWith('http') ? trimmed : `https://example.com/${trimmed}`);
         codeStr = urlObj.searchParams.get('sync') || trimmed;
       } catch {}
     }
@@ -224,7 +239,8 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
         onConnectSync(formattedCode, { logs: remoteData.logs, profile: remoteData.profile || profile });
         setInputCode('');
       } else {
-        const success = await pushDataToCloud(cleanDigits, logs, profile);
+        const allLogs = getAllStoredLogsWithTombstones();
+        const success = await pushDataToCloud(cleanDigits, allLogs, profile);
         if (success) {
           onConnectSync(formattedCode);
           setInputCode('');
@@ -248,15 +264,44 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   };
 
   const handleCopyLink = () => {
-    const dataPayload = encodeDataToBase64(logs, profile);
-    const fullLink = displayCode
-      ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}${dataPayload ? `&d=${dataPayload}` : ''}`
-      : cleanUrl;
-
-    const ok = copyToClipboard(fullLink);
+    const ok = copyToClipboard(cleanUrl);
     if (ok) {
       setCopiedLink(true);
       setTimeout(() => setCopiedLink(false), 2500);
+    }
+  };
+
+  const renderStatusBadge = () => {
+    switch (syncStatus) {
+      case 'syncing':
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-amber-800 bg-amber-100/80 px-2.5 py-1 rounded-full border border-amber-300/60">
+            <RefreshCw className="w-3.5 h-3.5 text-amber-600 animate-spin" />
+            {isVI ? 'Đang đồng bộ...' : 'Syncing...'}
+          </span>
+        );
+      case 'error':
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-rose-800 bg-rose-100/80 px-2.5 py-1 rounded-full border border-rose-300/60">
+            <AlertCircle className="w-3.5 h-3.5 text-rose-600" />
+            {isVI ? 'Lỗi kết nối Cloud' : 'Sync Error'}
+          </span>
+        );
+      case 'pending':
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-slate-700 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-300">
+            <Clock className="w-3.5 h-3.5 text-slate-500" />
+            {isVI ? 'Có thay đổi cục bộ' : 'Pending changes'}
+          </span>
+        );
+      case 'synced':
+      default:
+        return (
+          <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-100/80 px-2.5 py-1 rounded-full border border-emerald-300/60">
+            <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
+            {isVI ? 'Đã đồng bộ' : 'Synced'}
+          </span>
+        );
     }
   };
 
@@ -281,7 +326,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
               {isVI ? 'Đồng bộ Cloud đa thiết bị' : 'Multi-Device Cloud Sync'}
             </h3>
             <p className="text-xs text-slate-500 font-medium">
-              {isVI ? 'Đồng bộ nhật ký & profile giữa Máy tính & Điện thoại' : 'Sync logs & profile across all your devices'}
+              {isVI ? 'Đồng bộ conflict-safe giữa Máy tính & Điện thoại' : 'Conflict-safe sync across all your devices'}
             </p>
           </div>
         </div>
@@ -291,10 +336,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
           <div className="space-y-4 mb-4">
             <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-2xl p-4 border border-emerald-200/70 relative">
               <div className="flex items-center justify-between mb-2">
-                <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-100/80 px-2.5 py-1 rounded-full border border-emerald-300/60">
-                  <Zap className="w-3.5 h-3.5 text-emerald-600 animate-pulse" />
-                  {isVI ? 'Đang bật đồng bộ Cloud' : 'Cloud Sync Active'}
-                </span>
+                {renderStatusBadge()}
                 <button
                   type="button"
                   onClick={() => setShowQR(!showQR)}
@@ -334,6 +376,12 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                       </>
                     )}
                   </button>
+                </div>
+
+                {/* Last Sync Timestamp Indicator */}
+                <div className="text-[11px] text-slate-500 font-medium flex items-center gap-1 pt-1 border-t border-slate-100">
+                  <Clock className="w-3 h-3 text-slate-400" />
+                  <span>{isVI ? 'Lần đồng bộ gần nhất:' : 'Last synced:'} <strong className="text-slate-700">{formatTimeStr(lastSyncTime)}</strong></span>
                 </div>
 
                 {/* Main Action Buttons */}
@@ -377,7 +425,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                   </button>
                 </div>
 
-                {/* 1-Click Sync Link Button (Failproof via Zalo / Messenger / AirDrop) */}
+                {/* 1-Click Sync Link Button */}
                 <div className="pt-2">
                   <button
                     type="button"
@@ -387,12 +435,12 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                     {copiedLink ? (
                       <>
                         <Check className="w-4 h-4 text-emerald-400" />
-                        <span>{isVI ? 'Đã sao chép Link kèm Dữ liệu! ✅' : 'Copied Link with Data! ✅'}</span>
+                        <span>{isVI ? 'Đã sao chép Link đồng bộ! ✅' : 'Copied Sync Link! ✅'}</span>
                       </>
                     ) : (
                       <>
                         <Link className="w-4 h-4 text-teal-400" />
-                        <span>{isVI ? '🔗 Copy Link Kèm Dữ Liệu (1-Click)' : '🔗 Copy Link with Data (1-Click)'}</span>
+                        <span>{isVI ? '🔗 Copy Link Đồng Bộ (1-Click)' : '🔗 Copy Sync Link (1-Click)'}</span>
                       </>
                     )}
                   </button>
@@ -484,7 +532,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
                 type="text"
                 value={inputCode}
                 onChange={e => setInputCode(e.target.value)}
-                placeholder={isVI ? 'VD: 115-628' : 'e.g. 115-628'}
+                placeholder={isVI ? 'VD: 115-628 hoặc dán link' : 'e.g. 115-628 or paste link'}
                 className="flex-1 px-3 py-2 border border-slate-300 rounded-xl text-xs focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none font-mono"
               />
               <button
@@ -506,7 +554,7 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
             <div className="grid grid-cols-2 gap-2">
               <button
                 type="button"
-                onClick={() => exportFullBackup(logs, profile)}
+                onClick={() => exportFullBackup(getAllStoredLogsWithTombstones(), profile)}
                 className="flex items-center justify-center gap-1.5 py-2.5 px-3 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-300 rounded-xl text-xs font-bold transition active:scale-95"
               >
                 <Download className="w-4 h-4 text-emerald-600" />

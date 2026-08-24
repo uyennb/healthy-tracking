@@ -1,7 +1,7 @@
 import React from 'react';
 import { formatDisplayCode } from '../../services/cloudSyncService';
-import { Flame, User, Cloud, Zap } from 'lucide-react';
-import { UserProfile, Language } from '../../types/health';
+import { Flame, User, Cloud, Zap, RefreshCw, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { UserProfile, Language, SyncStatus } from '../../types/health';
 import { getTranslation } from '../../utils/i18n';
 
 interface HeaderProps {
@@ -11,6 +11,7 @@ interface HeaderProps {
   language: Language;
   onChangeLanguage: (lang: Language) => void;
   syncCode?: string;
+  syncStatus?: SyncStatus;
   onOpenCloudSync?: () => void;
 }
 
@@ -20,9 +21,27 @@ export const Header: React.FC<HeaderProps> = ({
   language,
   onChangeLanguage,
   syncCode,
+  syncStatus = 'synced',
   onOpenCloudSync,
 }) => {
   const t = getTranslation(language);
+
+  const getSyncButtonStyles = () => {
+    if (!syncCode) {
+      return 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white shadow-teal-500/25 hover:opacity-95';
+    }
+    switch (syncStatus) {
+      case 'syncing':
+        return 'bg-amber-500 text-white shadow-amber-500/25 hover:bg-amber-600';
+      case 'error':
+        return 'bg-rose-500 text-white shadow-rose-500/25 hover:bg-rose-600';
+      case 'pending':
+        return 'bg-slate-700 text-white shadow-slate-700/25 hover:bg-slate-800';
+      case 'synced':
+      default:
+        return 'bg-emerald-500 text-white shadow-emerald-500/25 hover:bg-emerald-600';
+    }
+  };
 
   return (
     <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-100 shadow-sm px-4 py-3">
@@ -43,16 +62,15 @@ export const Header: React.FC<HeaderProps> = ({
           {onOpenCloudSync && (
             <button
               onClick={onOpenCloudSync}
-              className={`flex items-center gap-1.5 text-xs font-extrabold px-3 py-1.5 rounded-xl transition active:scale-95 shadow-sm ${
-                syncCode
-                  ? 'bg-emerald-500 text-white shadow-emerald-500/25 hover:bg-emerald-600'
-                  : 'bg-gradient-to-r from-teal-500 to-emerald-500 text-white shadow-teal-500/25 hover:opacity-95'
-              }`}
+              className={`flex items-center gap-1.5 text-xs font-extrabold px-3 py-1.5 rounded-xl transition active:scale-95 shadow-sm ${getSyncButtonStyles()}`}
               title="Đồng bộ Đám mây / Cloud Sync"
             >
               {syncCode ? (
                 <>
-                  <Zap className="w-3.5 h-3.5 text-yellow-300 fill-yellow-300 animate-pulse flex-shrink-0" />
+                  {syncStatus === 'syncing' && <RefreshCw className="w-3.5 h-3.5 animate-spin flex-shrink-0" />}
+                  {syncStatus === 'error' && <AlertCircle className="w-3.5 h-3.5 flex-shrink-0" />}
+                  {syncStatus === 'synced' && <Zap className="w-3.5 h-3.5 text-yellow-300 fill-yellow-300 animate-pulse flex-shrink-0" />}
+                  {syncStatus === 'pending' && <Cloud className="w-3.5 h-3.5 text-slate-200 flex-shrink-0" />}
                   <span className="font-mono text-xs font-black tracking-wider">{formatDisplayCode(syncCode)}</span>
                 </>
               ) : (
