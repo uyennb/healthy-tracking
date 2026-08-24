@@ -98,28 +98,10 @@ export const CloudSyncModal: React.FC<CloudSyncModalProps> = ({
   const [errorMsg, setErrorMsg] = useState('');
   const [showQR, setShowQR] = useState(false);
 
-  const [qrUrl, setQrUrl] = useState('');
-
   const isVI = language === 'vi';
   const displayCode = formatDisplayCode(syncCode);
   const currentUrl = typeof window !== 'undefined' ? window.location.origin : '';
-
-  useEffect(() => {
-    let isMounted = true;
-    if (displayCode && logs && logs.length > 0) {
-      encodeDataToBase64Async(logs, profile).then(compressed => {
-        if (isMounted) {
-          const link = compressed
-            ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}&d=${compressed}`
-            : `${currentUrl}?sync=${encodeURIComponent(displayCode)}`;
-          setQrUrl(link);
-        }
-      });
-    } else {
-      setQrUrl(displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl);
-    }
-    return () => { isMounted = false; };
-  }, [displayCode, logs, profile, currentUrl]);
+  const qrUrl = displayCode ? `${currentUrl}?sync=${encodeURIComponent(displayCode)}` : currentUrl;
 
   if (!isOpen) return null;
 
