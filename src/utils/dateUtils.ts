@@ -26,17 +26,29 @@ export function filterLogsByPeriod(
   customRange?: CustomDateRange,
   refDate: Date = new Date()
 ): DailyLog[] {
+  const safeLogs = (Array.isArray(logs) ? logs : []).filter(l => l && typeof l === 'object' && l.date && typeof l.date === 'string');
+
   if (period === 'all') {
-    return [...logs].sort((a, b) => a.date.localeCompare(b.date));
+    return [...safeLogs].sort((a, b) => String(a.date).localeCompare(String(b.date)));
   }
 
   if (period === 'custom' && customRange?.startDate && customRange?.endDate) {
-    const start = startOfDay(parseISO(customRange.startDate));
-    const end = endOfDay(parseISO(customRange.endDate));
-    return logs.filter(log => {
-      const d = parseISO(log.date);
-      return isWithinInterval(d, { start, end });
-    }).sort((a, b) => a.date.localeCompare(b.date));
+    let start: Date;
+    let end: Date;
+    try {
+      start = startOfDay(parseISO(customRange.startDate));
+      end = endOfDay(parseISO(customRange.endDate));
+    } catch {
+      return safeLogs;
+    }
+    return safeLogs.filter(log => {
+      try {
+        const d = parseISO(log.date);
+        return !isNaN(d.getTime()) && isWithinInterval(d, { start, end });
+      } catch {
+        return false;
+      }
+    }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
   }
 
   let start: Date;
@@ -64,31 +76,42 @@ export function filterLogsByPeriod(
       break;
   }
 
-  return logs.filter(log => {
-    const d = parseISO(log.date);
-    return isWithinInterval(d, { start, end });
-  }).sort((a, b) => a.date.localeCompare(b.date));
+  return safeLogs.filter(log => {
+    try {
+      const d = parseISO(log.date);
+      return !isNaN(d.getTime()) && isWithinInterval(d, { start, end });
+    } catch {
+      return false;
+    }
+  }).sort((a, b) => String(a.date).localeCompare(String(b.date)));
 }
 
 /**
  * Prepare data for display in charts or tables
  */
 export function processChartData(logs: DailyLog[]): AggregatedData[] {
-  return logs.map(log => {
-    const dateObj = parseISO(log.date);
-    const label = format(dateObj, 'dd/MM');
+  const safeLogs = (Array.isArray(logs) ? logs : []).filter(l => l && typeof l === 'object' && l.date && typeof l.date === 'string');
+  return safeLogs.map(log => {
+    let label = log.date;
+    try {
+      const dateObj = parseISO(log.date);
+      if (!isNaN(dateObj.getTime())) {
+        label = format(dateObj, 'dd/MM');
+      }
+    } catch {}
+
     return {
       label,
       dateStr: log.date,
-      caloIn: log.caloIn,
-      caloOut: log.caloOut,
-      deficit: log.caloIn - log.caloOut,
-      protein: log.protein,
-      carbs: log.carbs,
-      fats: log.fats,
-      fiber: log.fiber,
-      workoutDuration: log.workoutDuration,
-      workoutCalo: log.workoutCalo,
+      caloIn: Number(log.caloIn) || 0,
+      caloOut: Number(log.caloOut) || 0,
+      deficit: (Number(log.caloIn) || 0) - (Number(log.caloOut) || 0),
+      protein: Number(log.protein) || 0,
+      carbs: Number(log.carbs) || 0,
+      fats: Number(log.fats) || 0,
+      fiber: Number(log.fiber) || 0,
+      workoutDuration: Number(log.workoutDuration) || 0,
+      workoutCalo: Number(log.workoutCalo) || 0,
       count: 1,
     };
   });

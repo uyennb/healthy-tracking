@@ -37,7 +37,10 @@ export function getStoredLogs(): DailyLog[] {
     }
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed) && parsed.length > 0) {
-      return parsed.sort((a: DailyLog, b: DailyLog) => b.date.localeCompare(a.date));
+      const valid = parsed.filter((l: any) => l && typeof l === 'object' && l.date && typeof l.date === 'string');
+      if (valid.length > 0) {
+        return valid.sort((a: DailyLog, b: DailyLog) => String(b.date).localeCompare(String(a.date)));
+      }
     }
     const realLogs = generateSampleData(8);
     saveLogs(realLogs);
@@ -50,7 +53,9 @@ export function getStoredLogs(): DailyLog[] {
 
 export function saveLogs(logs: DailyLog[]): void {
   try {
-    const sorted = [...logs].sort((a, b) => b.date.localeCompare(a.date));
+    const safeLogs = Array.isArray(logs) ? logs : [];
+    const valid = safeLogs.filter((l: any) => l && typeof l === 'object' && l.date && typeof l.date === 'string');
+    const sorted = valid.sort((a, b) => String(b.date).localeCompare(String(a.date)));
     localStorage.setItem(LOGS_STORAGE_KEY, JSON.stringify(sorted));
   } catch (err) {
     console.error('Error saving logs to LocalStorage', err);
