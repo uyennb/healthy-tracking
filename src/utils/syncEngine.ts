@@ -2,20 +2,24 @@ import { DailyLog, UserProfile } from '../types/health';
 import { USER_REAL_LOGS } from './sampleData';
 
 /**
- * Generate a cryptographically secure 256-bit high-entropy token
+ * Generate a cryptographically secure 256-bit (32 bytes) high-entropy token
  */
 export function generateSecureToken(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.getRandomValues === 'function') {
-    const array = new Uint8Array(24);
+    const array = new Uint8Array(32);
     crypto.getRandomValues(array);
     return Array.from(array, byte => byte.toString(16).padStart(2, '0')).join('');
   }
-  // Node.js / Fallback crypto
+  // Node.js fallback
   try {
     const nodeCrypto = require('crypto');
-    return nodeCrypto.randomBytes(24).toString('hex');
+    return nodeCrypto.randomBytes(32).toString('hex');
   } catch {
-    return `stk_${Math.random().toString(36).substring(2, 15)}_${Date.now().toString(36)}`;
+    const arr = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      arr[i] = Math.floor(Math.random() * 256);
+    }
+    return Array.from(arr, byte => byte.toString(16).padStart(2, '0')).join('');
   }
 }
 

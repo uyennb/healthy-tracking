@@ -1,5 +1,5 @@
 // Comprehensive Multi-Device Sync Verification Suite for NutriFit
-// Directly imports production algorithms from src/utils/syncEngine.ts
+// Integration tests invoking actual production handlers (api/sync.js, api/kvAdapter.js) and algorithms (src/utils/syncEngine.ts)
 
 import assert from 'assert';
 import {
@@ -11,9 +11,50 @@ import {
   generateSecureToken,
   mergeConflictingLegacyLogs,
 } from '../src/utils/syncEngine';
+import { createSyncHandler } from '../api/sync.js';
+import { KvAdapter } from '../api/kvAdapter.js';
+
+// Helper to simulate express/vercel req & res
+function createMockHttp() {
+  const req: any = {
+    headers: {},
+    query: {},
+    body: {},
+    method: 'GET',
+  };
+
+  let statusCode = 200;
+  let responseData: any = null;
+  const headers: Record<string, string> = {};
+
+  const res: any = {
+    status(code: number) {
+      statusCode = code;
+      return this;
+    },
+    setHeader(name: string, value: string) {
+      headers[name] = value;
+      return this;
+    },
+    json(data: any) {
+      responseData = data;
+      return this;
+    },
+    end() {
+      return this;
+    },
+    getStatusCode: () => statusCode,
+    getData: () => responseData,
+  };
+
+  return { req, res };
+}
 
 async function runAllTests() {
-  console.log('🚀 Running Production Multi-Device Sync Verification Suite (Scenarios A through Q)...\n');
+  console.log('🚀 Running Production Multi-Device Sync Verification Suite with Actual API Handler...\n');
+
+  const testKv = new KvAdapter({ isTestMode: true });
+  const handler = createSyncHandler(testKv);
 
   // Scenario A: Phone edits day X -> Desktop opened later with stale data -> Phone edit wins
   {
@@ -116,20 +157,32 @@ async function runAllTests() {
 
   // Scenario G: Persistent backend simulation and read/write durability
   {
-    console.log('Testing Scenario G: Persistent backend simulation and read/write durability');
-    const highEntropyTestNamespace = `test_ns_${Math.random().toString(36).substring(2, 10)}`;
-    const testPayload = {
+    console.log('Testing Scenario G: Persistent backend simulation and read/write durability via Handler');
+    const ns = `ns_g_${Date.now()}`;
+    const token = generateSecureToken();
+
+    // 1. Initial write
+    const http1 = createMockHttp();
+    http1.req.method = 'POST';
+    http1.req.body = {
+      code: ns,
+      token,
       logs: [sanitizeLog({ id: '1', date: '2026-08-22', caloIn: 1420, protein: 80, updatedAt: '2026-08-24T04:30:00.000Z' })!],
       profile: { name: 'Bảo Uyên', updatedAt: '2026-08-24T04:30:00.000Z' }
     };
+    await handler(http1.req, http1.res);
+    assert.strictEqual(http1.res.getStatusCode(), 200);
 
-    const persistentDb = new Map<string, typeof testPayload>();
-    persistentDb.set(highEntropyTestNamespace, testPayload);
-
-    const retrieved = persistentDb.get(highEntropyTestNamespace);
-    assert.strictEqual(retrieved?.logs[0].date, '2026-08-22');
-    assert.strictEqual(retrieved?.logs[0].caloIn, 1420);
-    assert.strictEqual(retrieved?.profile.name, 'Bảo Uyên');
+    // 2. Read back
+    const http2 = createMockHttp();
+    http2.req.method = 'GET';
+    http2.req.query = { code: ns, token };
+    await handler(http2.req, http2.res);
+    assert.strictEqual(http2.res.getStatusCode(), 200);
+    const data = http2.res.getData().data;
+    assert.strictEqual(data.logs[0].date, '2026-08-22');
+    assert.strictEqual(data.logs[0].caloIn, 1420);
+    assert.strictEqual(data.profile.name, 'Bảo Uyên');
     console.log('✅ Scenario G PASSED!\n');
   }
 
@@ -224,22 +277,37 @@ async function runAllTests() {
 
   // Scenario L: Persistent backend unavailable -> API failure (503 Service Unavailable)
   {
-    console.log('Testing Scenario L: Persistent backend unavailable returns 503 failure');
-    const mockEnv = { KV_REST_API_URL: '', KV_REST_API_TOKEN: '' };
-    const isConfigured = Boolean(mockEnv.KV_REST_API_URL && mockEnv.KV_REST_API_TOKEN);
-    assert.strictEqual(isConfigured, false, 'Unconfigured DB must be detected');
-    const statusCode = isConfigured ? 200 : 503;
-    assert.strictEqual(statusCode, 503, 'Must return 503 Service Unavailable when DB is unconfigured');
+    console.log('Testing Scenario L: Persistent backend unavailable returns 503 failure from actual handler');
+    const unconfiguredKv = new KvAdapter({ url: '', token: '', isTestMode: false });
+    const unconfiguredHandler = createSyncHandler(unconfiguredKv);
+
+    const http = createMockHttp();
+    http.req.method = 'POST';
+    http.req.body = { code: '888-999', token: generateSecureToken(), logs: [] };
+    await unconfiguredHandler(http.req, http.res);
+
+    assert.strictEqual(http.res.getStatusCode(), 503, 'Must return 503 Service Unavailable');
+    assert.strictEqual(http.res.getData().success, false);
     console.log('✅ Scenario L PASSED!\n');
   }
 
   // Scenario M: Persistent backend write failure -> API failure (500), client not marked Synced
   {
-    console.log('Testing Scenario M: Backend write failure returns 500 error, client remains un-synced');
-    const mockWriteResult = { success: false, error: 'KV_SET_TIMEOUT' };
-    assert.strictEqual(mockWriteResult.success, false);
-    const clientSyncStatus = mockWriteResult.success ? 'synced' : 'error';
-    assert.strictEqual(clientSyncStatus, 'error', 'Client status must remain error on write failure');
+    console.log('Testing Scenario M: Backend write failure returns 500 error from actual handler');
+    const errorKv: any = {
+      isConfigured: () => true,
+      getState: async () => ({ data: null }),
+      atomicCompareAndSet: async () => ({ error: 'FORCED_TEST_WRITE_FAILURE' })
+    };
+    const errorHandler = createSyncHandler(errorKv);
+
+    const http = createMockHttp();
+    http.req.method = 'POST';
+    http.req.body = { code: '888-999', token: generateSecureToken(), logs: [] };
+    await errorHandler(http.req, http.res);
+
+    assert.strictEqual(http.res.getStatusCode(), 500, 'Must return 500 Internal Server Error');
+    assert.strictEqual(http.res.getData().success, false);
     console.log('✅ Scenario M PASSED!\n');
   }
 
@@ -258,63 +326,175 @@ async function runAllTests() {
     console.log('✅ Scenario N PASSED!\n');
   }
 
-  // Scenario O: Unauthorized GET / POST with invalid token -> 403 Forbidden
+  // Scenario O: Actual API Auth Handler Tests (401 on missing creation token, 403 on missing/wrong token)
   {
-    console.log('Testing Scenario O: High-entropy token verification (403 Forbidden on invalid token)');
-    const expectedToken = 'sec_token_9876543210abcdef';
-    const providedValidToken = 'sec_token_9876543210abcdef';
-    const providedInvalidToken = 'attacker_bad_token';
+    console.log('Testing Scenario O: Production Auth Handler Tests (401/403 on missing or wrong token)');
+    const ns = `ns_auth_${Date.now()}`;
+    const validToken = generateSecureToken();
+    const wrongToken = generateSecureToken();
 
-    const isValidCheck = providedValidToken === expectedToken;
-    const isInvalidCheck = providedInvalidToken === expectedToken;
+    // 1. New namespace creation without token -> 401 Unauthorized
+    const http0 = createMockHttp();
+    http0.req.method = 'POST';
+    http0.req.body = { code: ns, logs: [] };
+    await handler(http0.req, http0.res);
+    assert.strictEqual(http0.res.getStatusCode(), 401, 'New namespace without token must return 401');
 
-    assert.strictEqual(isValidCheck, true, 'Valid token must be accepted');
-    assert.strictEqual(isInvalidCheck, false, 'Invalid token must be rejected');
+    // 2. Create namespace with valid token -> 200 OK
+    const http1 = createMockHttp();
+    http1.req.method = 'POST';
+    http1.req.body = {
+      code: ns,
+      token: validToken,
+      logs: [sanitizeLog({ id: '1', date: '2026-08-22', caloIn: 1420, updatedAt: '2026-08-24T04:00:00.000Z' })!],
+    };
+    await handler(http1.req, http1.res);
+    assert.strictEqual(http1.res.getStatusCode(), 200, 'Initial creation with token must return 200');
+
+    // 3. Protected GET without token -> 403 Forbidden
+    const http2 = createMockHttp();
+    http2.req.method = 'GET';
+    http2.req.query = { code: ns };
+    await handler(http2.req, http2.res);
+    assert.strictEqual(http2.res.getStatusCode(), 403, 'GET without token must return 403');
+
+    // 4. Protected GET with wrong token -> 403 Forbidden
+    const http3 = createMockHttp();
+    http3.req.method = 'GET';
+    http3.req.query = { code: ns, token: wrongToken };
+    await handler(http3.req, http3.res);
+    assert.strictEqual(http3.res.getStatusCode(), 403, 'GET with wrong token must return 403');
+
+    // 5. Protected GET with correct token -> 200 OK
+    const http4 = createMockHttp();
+    http4.req.method = 'GET';
+    http4.req.query = { code: ns, token: validToken };
+    await handler(http4.req, http4.res);
+    assert.strictEqual(http4.res.getStatusCode(), 200, 'GET with correct token must return 200');
+
+    // 6. Protected POST without token -> 403 Forbidden
+    const http5 = createMockHttp();
+    http5.req.method = 'POST';
+    http5.req.body = { code: ns, logs: [] };
+    await handler(http5.req, http5.res);
+    assert.strictEqual(http5.res.getStatusCode(), 403, 'POST without token must return 403');
+
+    // 7. Protected POST with wrong token -> 403 Forbidden
+    const http6 = createMockHttp();
+    http6.req.method = 'POST';
+    http6.req.body = { code: ns, token: wrongToken, logs: [] };
+    await handler(http6.req, http6.res);
+    assert.strictEqual(http6.res.getStatusCode(), 403, 'POST with wrong token must return 403');
+
+    // 8. Protected POST with correct token -> 200 OK
+    const http7 = createMockHttp();
+    http7.req.method = 'POST';
+    http7.req.body = {
+      code: ns,
+      token: validToken,
+      logs: [sanitizeLog({ id: '2', date: '2026-08-23', caloIn: 1500, updatedAt: '2026-08-24T05:00:00.000Z' })!],
+    };
+    await handler(http7.req, http7.res);
+    assert.strictEqual(http7.res.getStatusCode(), 200, 'POST with correct token must return 200');
+
     console.log('✅ Scenario O PASSED!\n');
   }
 
-  // Scenario P: Concurrent POST requests to distinct days in parallel -> zero lost update
+  // Scenario P: Concurrent POST requests with Promise.all across 50 iterations -> zero lost update
   {
-    console.log('Testing Scenario P: Atomic parallel updates on distinct dates');
-    let state = [
-      sanitizeLog({ id: '0', date: '2026-08-19', caloIn: 1200, timestampConfidence: 'authoritative', updatedAt: '2026-08-19T08:00:00.000Z' })!
-    ];
+    console.log('Testing Scenario P: True parallel concurrent requests via Promise.all across 50 iterations');
+    const token = generateSecureToken();
 
-    const post1 = [sanitizeLog({ id: '1', date: '2026-08-21', caloIn: 1500, timestampConfidence: 'authoritative', updatedAt: '2026-08-24T04:00:00.000Z' })!];
-    const post2 = [sanitizeLog({ id: '2', date: '2026-08-22', caloIn: 1800, timestampConfidence: 'authoritative', updatedAt: '2026-08-24T04:01:00.000Z' })!];
+    for (let round = 1; round <= 50; round++) {
+      const concurrentNamespace = `ns_p_round_${round}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-    // Simulate atomic sequence
-    state = mergeLogsConflictSafe(state, post1);
-    state = mergeLogsConflictSafe(state, post2);
+      // Seed initial record
+      const seedHttp = createMockHttp();
+      seedHttp.req.method = 'POST';
+      seedHttp.req.body = {
+        code: concurrentNamespace,
+        token,
+        logs: [sanitizeLog({ id: '0', date: '2026-08-19', caloIn: 1200, updatedAt: '2026-08-19T08:00:00.000Z' })!],
+      };
+      await handler(seedHttp.req, seedHttp.res);
+      assert.strictEqual(seedHttp.res.getStatusCode(), 200);
 
-    assert.strictEqual(state.length, 3, 'Both parallel updates must be present');
-    assert.strictEqual(state.find(l => l.date === '2026-08-21')?.caloIn, 1500);
-    assert.strictEqual(state.find(l => l.date === '2026-08-22')?.caloIn, 1800);
-    console.log('✅ Scenario P PASSED!\n');
+      // Concurrent request 1 (Device A edits 2026-08-21)
+      const httpA = createMockHttp();
+      httpA.req.method = 'POST';
+      httpA.req.body = {
+        code: concurrentNamespace,
+        token,
+        logs: [sanitizeLog({ id: '1', date: '2026-08-21', caloIn: 1500 + round, updatedAt: '2026-08-24T04:00:00.000Z' })!],
+      };
+
+      // Concurrent request 2 (Device B edits 2026-08-22)
+      const httpB = createMockHttp();
+      httpB.req.method = 'POST';
+      httpB.req.body = {
+        code: concurrentNamespace,
+        token,
+        logs: [sanitizeLog({ id: '2', date: '2026-08-22', caloIn: 1800 + round, updatedAt: '2026-08-24T04:01:00.000Z' })!],
+      };
+
+      // Fire both requests truly concurrently!
+      await Promise.all([
+        handler(httpA.req, httpA.res),
+        handler(httpB.req, httpB.res),
+      ]);
+
+      // Verify canonical state in persistent database
+      const verifyHttp = createMockHttp();
+      verifyHttp.req.method = 'GET';
+      verifyHttp.req.query = { code: concurrentNamespace, token };
+      await handler(verifyHttp.req, verifyHttp.res);
+
+      assert.strictEqual(verifyHttp.res.getStatusCode(), 200);
+      const logs = verifyHttp.res.getData().data.logs;
+
+      assert.strictEqual(logs.length, 3, `Round ${round}: Must contain all 3 logs (initial, edit A, edit B) without lost update`);
+      assert.strictEqual(logs.find((l: any) => l.date === '2026-08-21')?.caloIn, 1500 + round);
+      assert.strictEqual(logs.find((l: any) => l.date === '2026-08-22')?.caloIn, 1800 + round);
+    }
+
+    console.log('✅ Scenario P (50 Concurrent Iterations) PASSED!\n');
   }
 
-  // Scenario Q: Cold-start process simulation -> data persisted across process boundaries
+  // Scenario Q: Cold-start persistence test: write via instance 1 -> simulate cold context in instance 2 -> read
   {
-    console.log('Testing Scenario Q: Cold-start persistent database retrieval');
-    const dbSimulator = new Map<string, string>();
-    const key = 'nutrifit_sync_coldstart_test';
-    const payload = JSON.stringify({
-      logs: [sanitizeLog({ id: '1', date: '2026-08-22', caloIn: 1420, timestampConfidence: 'authoritative', updatedAt: '2026-08-24T04:00:00.000Z' })],
-      profile: { name: 'Bảo Uyên', updatedAt: '2026-08-24T04:00:00.000Z' },
-      authToken: 'coldstart_token',
-      version: 1
-    });
+    console.log('Testing Scenario Q: Cold-start simulation reading persisted data from fresh handler instance');
+    const coldNamespace = `ns_q_${Date.now()}`;
+    const coldToken = generateSecureToken();
 
-    // Write to persistent DB
-    dbSimulator.set(key, payload);
+    // Context 1: Writer instance
+    const writerKv = new KvAdapter({ isTestMode: true });
+    const writerHandler = createSyncHandler(writerKv);
 
-    // Simulate cold-start retrieval in a fresh context
-    const coldReadRaw = dbSimulator.get(key);
-    assert.ok(coldReadRaw !== undefined, 'Cold read must succeed from persistent DB');
-    const coldRead = JSON.parse(coldReadRaw!);
-    assert.strictEqual(coldRead.logs[0].date, '2026-08-22');
-    assert.strictEqual(coldRead.logs[0].caloIn, 1420);
-    assert.strictEqual(coldRead.authToken, 'coldstart_token');
+    const writeHttp = createMockHttp();
+    writeHttp.req.method = 'POST';
+    writeHttp.req.body = {
+      code: coldNamespace,
+      token: coldToken,
+      logs: [sanitizeLog({ id: '1', date: '2026-08-22', caloIn: 1420, updatedAt: '2026-08-24T04:00:00.000Z' })!],
+      profile: { name: 'Bảo Uyên', updatedAt: '2026-08-24T04:00:00.000Z' }
+    };
+    await writerHandler(writeHttp.req, writeHttp.res);
+    assert.strictEqual(writeHttp.res.getStatusCode(), 200);
+
+    // Context 2: Fresh cold-start reader instance
+    const coldReaderKv = new KvAdapter({ isTestMode: true });
+    const coldReaderHandler = createSyncHandler(coldReaderKv);
+
+    const readHttp = createMockHttp();
+    readHttp.req.method = 'GET';
+    readHttp.req.query = { code: coldNamespace, token: coldToken };
+    await coldReaderHandler(readHttp.req, readHttp.res);
+
+    assert.strictEqual(readHttp.res.getStatusCode(), 200, 'Cold-start reader must succeed');
+    const retrieved = readHttp.res.getData().data;
+    assert.strictEqual(retrieved.logs[0].date, '2026-08-22');
+    assert.strictEqual(retrieved.logs[0].caloIn, 1420);
+    assert.strictEqual(retrieved.profile.name, 'Bảo Uyên');
     console.log('✅ Scenario Q PASSED!\n');
   }
 

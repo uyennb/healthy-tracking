@@ -1,5 +1,7 @@
 // Vercel Serverless Function for NutriFit Conflict-Safe Multi-Device Cloud Sync
-// Powered by Persistent Key-Value Database (Upstash Redis / Vercel KV) with Atomic Lua Updates & Auth Token Verification
+// Powered by Upstash Redis with Atomic Lua CAS & Strict 256-bit Auth Token Enforcement
+
+import { defaultKvAdapter, KvAdapter } from './kvAdapter.js';
 
 function getTimestampMs(isoString) {
   if (!isoString) return 0;
@@ -35,7 +37,7 @@ function mergeConflictingLegacyLogs(logA, logB) {
   };
 }
 
-function mergeLogsConflictSafe(local = [], remote = []) {
+export function mergeLogsConflictSafe(local = [], remote = []) {
   const map = new Map();
 
   local.forEach(l => {
@@ -67,7 +69,7 @@ function mergeLogsConflictSafe(local = [], remote = []) {
     if (remoteUpdatedMs > localUpdatedMs) {
       map.set(remoteLog.date, remoteLog);
     } else if (remoteUpdatedMs < localUpdatedMs) {
-      // Keep existing
+      // Keep existing local
     } else {
       if (remoteLog.deletedAt && !existing.deletedAt) {
         map.set(remoteLog.date, remoteLog);
@@ -90,7 +92,7 @@ function mergeLogsConflictSafe(local = [], remote = []) {
   return Array.from(map.values()).sort((a, b) => String(b.date).localeCompare(String(a.date)));
 }
 
-function mergeProfilesConflictSafe(local, remote) {
+export function mergeProfilesConflictSafe(local, remote) {
   if (!remote && !local) return { name: 'Bảo Uyên', updatedAt: '2026-08-20T00:00:00.000Z' };
   if (!remote) return local;
   if (!local) return remote;
@@ -113,252 +115,177 @@ function mergeProfilesConflictSafe(local, remote) {
   };
 }
 
-/**
- * Read durable state from Upstash / Vercel KV
- */
-async function readKVState(key) {
-  const kvUrl = process.env.KV_REST_API_URL;
-  const kvToken = process.env.KV_REST_API_TOKEN;
-
-  if (!kvUrl || !kvToken) {
-    return { error: 'KV_NOT_CONFIGURED' };
-  }
-
-  try {
-    const res = await fetch(`${kvUrl}/get/${encodeURIComponent(key)}`, {
-      headers: { Authorization: `Bearer ${kvToken}` },
-    });
-    if (!res.ok) {
-      return { error: `KV_READ_FAILED_${res.status}` };
+export function createSyncHandler(kv = defaultKvAdapter) {
+  return async function handler(req, res) {
+    // CORS Headers
+    if (res.setHeader) {
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
+      res.setHeader(
+        'Access-Control-Allow-Headers',
+        'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, x-sync-token'
+      );
     }
-    const json = await res.json();
-    if (json && json.result) {
-      try {
-        const parsed = typeof json.result === 'string' ? JSON.parse(json.result) : json.result;
-        return { data: parsed };
-      } catch (e) {
-        return { error: 'KV_PARSE_ERROR' };
+
+    if (req.method === 'OPTIONS') {
+      res.status(200).end();
+      return;
+    }
+
+    try {
+      const code = req.query?.code || req.body?.code;
+      if (!code) {
+        return res.status(400).json({ success: false, error: 'Mã kết nối là bắt buộc' });
       }
-    }
-    return { data: null };
-  } catch (err) {
-    return { error: err.message || 'KV_NETWORK_ERROR' };
-  }
-}
 
-/**
- * Atomic write to Upstash / Vercel KV with Lua Scripting / Concurrency Guard
- */
-async function writeKVStateAtomic(key, payload, incomingToken) {
-  const kvUrl = process.env.KV_REST_API_URL;
-  const kvToken = process.env.KV_REST_API_TOKEN;
+      const cleanCode = String(code).trim().replace(/[^a-zA-Z0-9_-]/g, '');
+      if (!cleanCode || cleanCode.length < 4) {
+        return res.status(400).json({ success: false, error: 'Mã kết nối không hợp lệ (tối thiểu 4 ký tự)' });
+      }
 
-  if (!kvUrl || !kvToken) {
-    return { error: 'KV_NOT_CONFIGURED' };
-  }
+      const storageKey = `nutrifit_sync_${cleanCode}`;
+      const incomingToken = String(
+        req.headers?.['x-sync-token'] || req.query?.token || req.body?.token || ''
+      ).trim();
 
-  // Use Upstash Redis atomic Lua evaluation endpoint (/eval)
-  const luaScript = `
-    local key = KEYS[1]
-    local incomingPayload = ARGV[1]
-    local incomingToken = ARGV[2]
-    local current = redis.call('GET', key)
-    if current then
-      local ok, decoded = pcall(cjson.decode, current)
-      if ok and decoded and decoded.authToken and decoded.authToken ~= '' and incomingToken and incomingToken ~= '' and incomingToken ~= decoded.authToken then
-        return cjson.encode({ unauthorized = true })
-      end
-    end
-    redis.call('SET', key, incomingPayload)
-    return cjson.encode({ success = true })
-  `;
+      // Check persistent database configuration
+      if (!kv.isConfigured()) {
+        return res.status(503).json({
+          success: false,
+          error: 'Cơ sở dữ liệu bền vững chưa được cấu hình. Vui lòng thiết lập biến môi trường KV_REST_API_URL và KV_REST_API_TOKEN trên Vercel.',
+        });
+      }
 
-  try {
-    const evalRes = await fetch(`${kvUrl}/eval`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${kvToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify([luaScript, 1, key, JSON.stringify(payload), incomingToken || '']),
-    });
+      if (req.method === 'POST' || req.method === 'PUT') {
+        const { logs: incomingLogs, profile: incomingProfile } = req.body || {};
 
-    if (evalRes.ok) {
-      const evalJson = await evalRes.json();
-      if (evalJson && evalJson.result) {
-        try {
-          const evalResult = typeof evalJson.result === 'string' ? JSON.parse(evalJson.result) : evalJson.result;
-          if (evalResult.unauthorized) {
-            return { error: 'UNAUTHORIZED' };
+        const MAX_RETRIES = 5;
+        let writeSucceeded = false;
+        let finalCandidate = null;
+
+        // Optimistic Concurrency Control (Version + CAS) Retry Loop
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          const currentRes = await kv.getState(storageKey);
+          if (currentRes.error) {
+            return res.status(500).json({ success: false, error: `Lỗi đọc dữ liệu Cloud: ${currentRes.error}` });
           }
-          if (evalResult.success) {
-            return { success: true };
+
+          const currentState = currentRes.data;
+
+          // Strict Auth Token Enforcement:
+          // If namespace exists and is protected, missing or wrong token -> 403 Forbidden
+          if (currentState && currentState.authToken && currentState.authToken !== '') {
+            if (!incomingToken || incomingToken !== currentState.authToken) {
+              return res.status(403).json({
+                success: false,
+                error: 'Mã xác thực token không hợp lệ (403 Forbidden)',
+              });
+            }
+          } else if (!currentState) {
+            // New namespace creation requires a valid high-entropy token
+            if (!incomingToken || incomingToken === '') {
+              return res.status(401).json({
+                success: false,
+                error: 'Token bảo mật là bắt buộc khi tạo không gian đồng bộ mới (401 Unauthorized)',
+              });
+            }
           }
-        } catch {}
-      }
-    }
 
-    // Fallback standard SET if /eval is disabled
-    const setRes = await fetch(`${kvUrl}/set/${encodeURIComponent(key)}`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${kvToken}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify(JSON.stringify(payload)),
-    });
+          const serverLogs = currentState?.logs || [];
+          const serverProfile = currentState?.profile || {};
+          const authToken = currentState?.authToken || incomingToken;
 
-    if (setRes.ok) {
-      return { success: true };
-    }
+          const mergedLogs = mergeLogsConflictSafe(serverLogs, incomingLogs || []);
+          const mergedProfile = mergeProfilesConflictSafe(serverProfile, incomingProfile || {});
+          const expectedVersion = Number(currentState?.version) || 0;
 
-    return { error: `KV_SET_FAILED_${setRes.status}` };
-  } catch (err) {
-    return { error: err.message || 'KV_NETWORK_ERROR' };
-  }
-}
+          finalCandidate = {
+            logs: mergedLogs,
+            profile: mergedProfile,
+            authToken,
+            version: expectedVersion + 1,
+            updatedAt: new Date().toISOString(),
+          };
 
-export default async function handler(req, res) {
-  // CORS Headers
-  res.setHeader('Access-Control-Allow-Credentials', 'true');
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET,OPTIONS,PATCH,DELETE,POST,PUT');
-  res.setHeader(
-    'Access-Control-Allow-Headers',
-    'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version, x-sync-token'
-  );
+          const casResult = await kv.atomicCompareAndSet(storageKey, expectedVersion, finalCandidate, incomingToken);
 
-  if (req.method === 'OPTIONS') {
-    res.status(200).end();
-    return;
-  }
+          if (casResult.unauthorized) {
+            return res.status(403).json({ success: false, error: 'Token không hợp lệ (403 Forbidden)' });
+          }
 
-  try {
-    const code = req.query.code || req.body?.code;
-    if (!code) {
-      return res.status(400).json({ success: false, error: 'Mã kết nối là bắt buộc' });
-    }
+          if (casResult.conflict) {
+            // Version race detected! Retry merge with updated state
+            continue;
+          }
 
-    const cleanCode = String(code).trim().replace(/[^a-zA-Z0-9_-]/g, '');
-    if (!cleanCode || cleanCode.length < 4) {
-      return res.status(400).json({ success: false, error: 'Mã kết nối không hợp lệ (tối thiểu 4 ký tự)' });
-    }
+          if (casResult.success) {
+            writeSucceeded = true;
+            break;
+          }
 
-    const storageKey = `nutrifit_sync_${cleanCode}`;
-    const incomingToken = String(req.headers['x-sync-token'] || req.query.token || req.body?.token || '').trim();
-
-    // Check if persistent database is configured
-    const kvUrl = process.env.KV_REST_API_URL;
-    const kvToken = process.env.KV_REST_API_TOKEN;
-    if (!kvUrl || !kvToken) {
-      return res.status(503).json({
-        success: false,
-        error: 'Cơ sở dữ liệu bền vững chưa được cấu hình. Vui lòng thiết lập biến môi trường KV_REST_API_URL và KV_REST_API_TOKEN trên Vercel.',
-      });
-    }
-
-    if (req.method === 'POST' || req.method === 'PUT') {
-      const { logs: incomingLogs, profile: incomingProfile } = req.body || {};
-
-      // 1. Read current durable state from KV
-      const currentRes = await readKVState(storageKey);
-      if (currentRes.error) {
-        return res.status(500).json({ success: false, error: `Lỗi đọc dữ liệu Cloud: ${currentRes.error}` });
-      }
-
-      const serverState = currentRes.data;
-
-      // 2. Validate Auth Token
-      if (serverState && serverState.authToken && incomingToken) {
-        if (serverState.authToken !== incomingToken) {
-          return res.status(403).json({
+          return res.status(500).json({
             success: false,
-            error: 'Mã xác thực token không hợp lệ hoặc không có quyền truy cập dữ liệu này (403 Forbidden)',
+            error: `Ghi dữ liệu bền vững thất bại: ${casResult.error || 'Unknown CAS error'}`,
           });
         }
-      }
 
-      const authToken = serverState?.authToken || incomingToken || '';
-      const serverLogs = serverState?.logs || [];
-      const serverProfile = serverState?.profile || {};
-
-      // 3. Perform Server-side Conflict-Safe Merge
-      const mergedLogs = mergeLogsConflictSafe(serverLogs, incomingLogs || []);
-      const mergedProfile = mergeProfilesConflictSafe(serverProfile, incomingProfile || {});
-      const mergedPayload = {
-        logs: mergedLogs,
-        profile: mergedProfile,
-        authToken,
-        version: (serverState?.version || 0) + 1,
-        updatedAt: new Date().toISOString(),
-      };
-
-      // 4. Atomic Write to Persistent Database
-      const writeResult = await writeKVStateAtomic(storageKey, mergedPayload, incomingToken);
-
-      if (!writeResult.success) {
-        if (writeResult.error === 'UNAUTHORIZED') {
-          return res.status(403).json({ success: false, error: 'Token không hợp lệ (403 Forbidden)' });
+        if (!writeSucceeded || !finalCandidate) {
+          return res.status(409).json({
+            success: false,
+            error: 'Xung đột phiên bản đồng thời vượt quá số lần thử lại (409 Conflict)',
+          });
         }
-        return res.status(500).json({
-          success: false,
-          error: `Ghi dữ liệu bền vững thất bại: ${writeResult.error}`,
+
+        return res.status(200).json({
+          success: true,
+          code: cleanCode,
+          data: {
+            logs: finalCandidate.logs,
+            profile: finalCandidate.profile,
+            updatedAt: finalCandidate.updatedAt,
+            version: finalCandidate.version,
+          },
         });
       }
 
-      // 5. Send lightweight privacy ping
-      try {
-        fetch(`https://ntfy.sh/nutrifit_ping_${cleanCode}`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ event: 'sync_ping', t: Date.now() }),
-        }).catch(() => {});
-      } catch {}
+      if (req.method === 'GET') {
+        const currentRes = await kv.getState(storageKey);
+        if (currentRes.error) {
+          return res.status(500).json({ success: false, error: `Lỗi đọc dữ liệu Cloud: ${currentRes.error}` });
+        }
 
-      return res.status(200).json({
-        success: true,
-        code: cleanCode,
-        data: {
-          logs: mergedLogs,
-          profile: mergedProfile,
-          updatedAt: mergedPayload.updatedAt,
-          version: mergedPayload.version,
-        },
-      });
-    }
+        const data = currentRes.data;
+        if (!data || !Array.isArray(data.logs)) {
+          return res.status(404).json({ success: false, error: 'Chưa có dữ liệu cho mã này' });
+        }
 
-    if (req.method === 'GET') {
-      const currentRes = await readKVState(storageKey);
-      if (currentRes.error) {
-        return res.status(500).json({ success: false, error: `Lỗi đọc dữ liệu Cloud: ${currentRes.error}` });
-      }
+        // Strict Auth Token Enforcement for GET:
+        if (data.authToken && data.authToken !== '') {
+          if (!incomingToken || incomingToken !== data.authToken) {
+            return res.status(403).json({
+              success: false,
+              error: 'Mã xác thực token không hợp lệ hoặc thiếu token (403 Forbidden)',
+            });
+          }
+        }
 
-      const data = currentRes.data;
-      if (!data || !Array.isArray(data.logs)) {
-        return res.status(404).json({ success: false, error: 'Chưa có dữ liệu cho mã này' });
-      }
-
-      // Validate Auth Token if namespace is protected
-      if (data.authToken && incomingToken && data.authToken !== incomingToken) {
-        return res.status(403).json({
-          success: false,
-          error: 'Mã xác thực token không hợp lệ (403 Forbidden)',
+        return res.status(200).json({
+          success: true,
+          data: {
+            logs: data.logs,
+            profile: data.profile,
+            updatedAt: data.updatedAt,
+            version: data.version,
+          },
         });
       }
 
-      return res.status(200).json({
-        success: true,
-        data: {
-          logs: data.logs,
-          profile: data.profile,
-          updatedAt: data.updatedAt,
-          version: data.version,
-        },
-      });
+      return res.status(405).json({ success: false, error: 'Method not allowed' });
+    } catch (err) {
+      return res.status(500).json({ success: false, error: err?.message || 'Server error' });
     }
-
-    return res.status(405).json({ success: false, error: 'Method not allowed' });
-  } catch (err) {
-    return res.status(500).json({ success: false, error: err.message || 'Server error' });
-  }
+  };
 }
+
+export default createSyncHandler(defaultKvAdapter);

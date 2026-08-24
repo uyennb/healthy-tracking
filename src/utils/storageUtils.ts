@@ -1,8 +1,8 @@
 import { DailyLog, UserGoals, UserProfile, Language } from '../types/health';
 import { generateSampleData } from './sampleData';
-import { sanitizeLog, isExactSampleLog } from './syncEngine';
+import { sanitizeLog, isExactSampleLog, generateSecureToken } from './syncEngine';
 
-export { sanitizeLog, isExactSampleLog };
+export { sanitizeLog, isExactSampleLog, generateSecureToken };
 
 const LOGS_STORAGE_KEY = 'nutrifit_daily_logs_v2';
 const LEGACY_LOGS_KEY = 'nutrifit_daily_logs_v1';
@@ -41,18 +41,18 @@ export function getDeviceId(): string {
 }
 
 /**
- * Get stored pairing secret token (high-entropy auth token)
+ * Get stored pairing secret token (256-bit high-entropy auth token)
  */
 export function getStoredSyncToken(): string {
   try {
     let token = localStorage.getItem(SYNC_TOKEN_STORAGE_KEY);
     if (!token) {
-      token = `stk_${Math.random().toString(36).substring(2, 12)}_${Date.now().toString(36)}`;
+      token = generateSecureToken();
       localStorage.setItem(SYNC_TOKEN_STORAGE_KEY, token);
     }
     return token;
   } catch {
-    return 'stk_default_token';
+    return generateSecureToken();
   }
 }
 

@@ -156,9 +156,23 @@ export function App() {
             const clean = formatDisplayCode(querySync);
             saveSyncCode(clean);
             setSyncCode(clean);
-            pushDataToCloud(clean, mergedLogs, mergedProf, queryToken || undefined);
+            setSyncStatus('syncing');
+            pushDataToCloud(clean, mergedLogs, mergedProf, queryToken || undefined).then(res => {
+              if (res.success && res.data) {
+                setLogs(res.data.logs.filter(l => !l.deletedAt));
+                setProfile(res.data.profile);
+                setSyncStatus('synced');
+                saveLastSyncTime(res.data.updatedAt);
+                setLastSyncTime(res.data.updatedAt);
+                showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
+              } else {
+                setSyncStatus('pending');
+                showToast(language === 'vi' ? 'ℹ️ Đã nhập dữ liệu vào thiết bị nhưng chưa đồng bộ Cloud' : 'ℹ️ Data imported locally, cloud sync pending');
+              }
+            });
+          } else {
+            showToast(language === 'vi' ? '✅ Đã nhập dữ liệu vào thiết bị thành công!' : '✅ Data imported locally!');
           }
-          showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
           window.history.replaceState({}, '', window.location.pathname);
           return;
         }
@@ -179,9 +193,23 @@ export function App() {
               const clean = formatDisplayCode(querySync);
               saveSyncCode(clean);
               setSyncCode(clean);
-              pushDataToCloud(clean, mergedLogs, mergedProf, queryToken || undefined);
+              setSyncStatus('syncing');
+              pushDataToCloud(clean, mergedLogs, mergedProf, queryToken || undefined).then(res => {
+                if (res.success && res.data) {
+                  setLogs(res.data.logs.filter(l => !l.deletedAt));
+                  setProfile(res.data.profile);
+                  setSyncStatus('synced');
+                  saveLastSyncTime(res.data.updatedAt);
+                  setLastSyncTime(res.data.updatedAt);
+                  showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
+                } else {
+                  setSyncStatus('pending');
+                  showToast(language === 'vi' ? 'ℹ️ Đã nhập dữ liệu vào thiết bị nhưng chưa đồng bộ Cloud' : 'ℹ️ Data imported locally, cloud sync pending');
+                }
+              });
+            } else {
+              showToast(language === 'vi' ? '✅ Đã nhập dữ liệu vào thiết bị thành công!' : '✅ Data imported locally!');
             }
-            showToast(language === 'vi' ? '✅ Đã đồng bộ 100% dữ liệu thành công!' : '✅ Synced 100% data successfully!');
             window.history.replaceState({}, '', window.location.pathname);
           }
         });
