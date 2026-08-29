@@ -427,7 +427,7 @@ export function App() {
 
       {/* Main Container */}
       <main className="max-w-xl mx-auto px-3.5 pt-4">
-        {activeTab === 'profile' ? (
+        {activeTab === 'profile' && (
           /* Profile Tab */
           <ProfileView
             profile={profile}
@@ -438,9 +438,25 @@ export function App() {
             onOpenCloudSync={() => setIsSyncModalOpen(true)}
             syncCode={syncCode}
           />
-        ) : (
+        )}
+
+        {activeTab === 'dashboard' && (
+          /* Overview / Dashboard Tab */
           <>
-            {/* Period Filter Selection */}
+            <PeriodFilter
+              period={period}
+              onChangePeriod={setPeriod}
+              customRange={customRange}
+              onChangeCustomRange={setCustomRange}
+              language={language}
+            />
+            <SummaryCards logs={filteredLogs} language={language} />
+          </>
+        )}
+
+        {activeTab === 'charts' && (
+          /* Charts Tab */
+          <>
             <PeriodFilter
               period={period}
               onChangePeriod={setPeriod}
@@ -449,11 +465,8 @@ export function App() {
               language={language}
             />
 
-            {/* Metric Summary Cards */}
-            <SummaryCards logs={filteredLogs} language={language} />
-
-            {/* Display Mode Selection: Charts vs Table */}
-            <div className="flex items-center justify-between mt-6 mb-3 px-1">
+            {/* Display Mode Selection: Bar vs Line */}
+            <div className="flex items-center justify-between mt-4 mb-3 px-1">
               <span className="text-xs font-black text-slate-400 uppercase tracking-wider">
                 {t.displayTitle}
               </span>
@@ -481,86 +494,84 @@ export function App() {
                 >
                   <LineChartIcon className="w-4 h-4" />
                 </button>
-                <button
-                  onClick={() => setDisplayMode('table')}
-                  className={`p-1.5 rounded-lg transition ${
-                    displayMode === 'table'
-                      ? 'bg-emerald-500 text-white shadow-xs'
-                      : 'text-slate-400 hover:text-slate-600'
-                  }`}
-                  title={t.modeTable}
-                >
-                  <TableIcon className="w-4 h-4" />
-                </button>
               </div>
             </div>
 
-            {/* Visual Charts or Log Data Table */}
-            {displayMode === 'table' ? (
-              <LogDataTable
-                logs={filteredLogs}
-                onEdit={handleEditClick}
-                onDelete={handleDeleteLog}
-                language={language}
-              />
-            ) : (
-              <div className="space-y-4">
-                {/* Category Filter for Charts */}
-                <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
-                  <button
-                    onClick={() => setChartCategory('all')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
-                      chartCategory === 'all'
-                        ? 'bg-slate-800 text-white shadow-sm'
-                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
-                    }`}
-                  >
-                    {t.catAll}
-                  </button>
-                  <button
-                    onClick={() => setChartCategory('nutrition')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
-                      chartCategory === 'nutrition'
-                        ? 'bg-blue-600 text-white shadow-sm'
-                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
-                    }`}
-                  >
-                    {t.catNutrition}
-                  </button>
-                  <button
-                    onClick={() => setChartCategory('energy')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
-                      chartCategory === 'energy'
-                        ? 'bg-emerald-600 text-white shadow-sm'
-                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
-                    }`}
-                  >
-                    {t.catEnergy}
-                  </button>
-                  <button
-                    onClick={() => setChartCategory('workout')}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
-                      chartCategory === 'workout'
-                        ? 'bg-indigo-600 text-white shadow-sm'
-                        : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
-                    }`}
-                  >
-                    {t.catWorkout}
-                  </button>
-                </div>
-
-                {/* Render Selected Charts */}
-                {(chartCategory === 'all' || chartCategory === 'nutrition') && (
-                  <NutritionChart data={chartData} mode={displayMode} language={language} />
-                )}
-                {(chartCategory === 'all' || chartCategory === 'energy') && (
-                  <EnergyBalanceChart data={chartData} mode={displayMode} language={language} />
-                )}
-                {(chartCategory === 'all' || chartCategory === 'workout') && (
-                  <WorkoutChart data={chartData} mode={displayMode} language={language} />
-                )}
+            <div className="space-y-4">
+              {/* Category Filter for Charts */}
+              <div className="flex gap-1.5 overflow-x-auto pb-1 no-scrollbar">
+                <button
+                  onClick={() => setChartCategory('all')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                    chartCategory === 'all'
+                      ? 'bg-slate-800 text-white shadow-sm'
+                      : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
+                  }`}
+                >
+                  {t.catAll}
+                </button>
+                <button
+                  onClick={() => setChartCategory('nutrition')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                    chartCategory === 'nutrition'
+                      ? 'bg-blue-600 text-white shadow-sm'
+                      : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
+                  }`}
+                >
+                  {t.catNutrition}
+                </button>
+                <button
+                  onClick={() => setChartCategory('energy')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                    chartCategory === 'energy'
+                      ? 'bg-emerald-600 text-white shadow-sm'
+                      : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
+                  }`}
+                >
+                  {t.catEnergy}
+                </button>
+                <button
+                  onClick={() => setChartCategory('workout')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold whitespace-nowrap transition ${
+                    chartCategory === 'workout'
+                      ? 'bg-indigo-600 text-white shadow-sm'
+                      : 'bg-white text-slate-500 hover:bg-slate-100 border border-slate-100'
+                  }`}
+                >
+                  {t.catWorkout}
+                </button>
               </div>
-            )}
+
+              {/* Render Selected Charts */}
+              {(chartCategory === 'all' || chartCategory === 'nutrition') && (
+                <NutritionChart data={chartData} mode={displayMode} language={language} />
+              )}
+              {(chartCategory === 'all' || chartCategory === 'energy') && (
+                <EnergyBalanceChart data={chartData} mode={displayMode} language={language} />
+              )}
+              {(chartCategory === 'all' || chartCategory === 'workout') && (
+                <WorkoutChart data={chartData} mode={displayMode} language={language} />
+              )}
+            </div>
+          </>
+        )}
+
+        {activeTab === 'table' && (
+          /* Detailed Data Table Tab */
+          <>
+            <PeriodFilter
+              period={period}
+              onChangePeriod={setPeriod}
+              customRange={customRange}
+              onChangeCustomRange={setCustomRange}
+              language={language}
+            />
+            <LogDataTable
+              logs={filteredLogs}
+              onEdit={handleEditClick}
+              onDelete={handleDeleteLog}
+              language={language}
+            />
           </>
         )}
       </main>
@@ -590,6 +601,8 @@ export function App() {
         isOpen={isDataModalOpen}
         onClose={() => setIsDataModalOpen(false)}
         logs={logs}
+        profile={profile}
+        language={language}
         onImportLogs={handleImportLogs}
         onResetSample={handleQuickReset}
         onClearAll={handleClearAll}

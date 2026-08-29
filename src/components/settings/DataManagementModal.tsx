@@ -1,12 +1,15 @@
-import React, { useRef } from 'react';
-import { X, Download, Upload, RefreshCw, Trash2, Database } from 'lucide-react';
-import { DailyLog } from '../../types/health';
+import React, { useRef, useState } from 'react';
+import { X, Download, Upload, RefreshCw, Trash2, Database, FileSpreadsheet, Loader2 } from 'lucide-react';
+import { DailyLog, UserProfile, Language } from '../../types/health';
 import { exportLogsToCSV, exportLogsToJSON } from '../../utils/storageUtils';
+import { exportHealthReportToExcel } from '../../utils/excelExport';
 
 interface DataManagementModalProps {
   isOpen: boolean;
   onClose: () => void;
   logs: DailyLog[];
+  profile?: UserProfile;
+  language?: Language;
   onImportLogs: (imported: DailyLog[]) => void;
   onResetSample: () => void;
   onClearAll: () => void;
@@ -16,13 +19,28 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
   isOpen,
   onClose,
   logs,
+  profile,
+  language = 'vi',
   onImportLogs,
   onResetSample,
   onClearAll,
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isExportingExcel, setIsExportingExcel] = useState(false);
 
   if (!isOpen) return null;
+
+  const handleExportExcel = async () => {
+    try {
+      setIsExportingExcel(true);
+      await exportHealthReportToExcel(logs, profile, language);
+    } catch (err) {
+      console.error('Error exporting Excel report:', err);
+      alert('Có lỗi xảy ra khi tạo file Excel. Vui lòng thử lại.');
+    } finally {
+      setIsExportingExcel(false);
+    }
+  };
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -71,23 +89,41 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
           </p>
 
           {/* Export Options */}
-          <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-2">
+          <div className="bg-slate-50 p-3.5 rounded-2xl border border-slate-100 space-y-2.5">
             <h3 className="text-xs font-bold text-slate-700 uppercase tracking-wider">Xuất Dữ Liệu (Export)</h3>
+            
+            {/* Primary Action: Styled Excel Health Report */}
+            <button
+              onClick={handleExportExcel}
+              disabled={isExportingExcel}
+              className="w-full flex items-center justify-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 text-white font-extrabold text-xs py-3 px-3 rounded-xl transition active:scale-95 shadow-sm shadow-emerald-600/20 disabled:opacity-75"
+            >
+              {isExportingExcel ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+              )}
+              <span>{language === 'vi' ? 'Xuất Báo Cáo Excel (.xlsx)' : 'Export Excel Report (.xlsx)'}</span>
+            </button>
+
+            {/* Backup & CSV secondary options */}
             <div className="grid grid-cols-2 gap-2">
               <button
-                onClick={() => exportLogsToCSV(logs)}
-                className="flex items-center justify-center gap-2 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl transition active:scale-95"
+                onClick={() => exportLogsToJSON(logs)}
+                className="flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2 px-2.5 rounded-xl transition active:scale-95 shadow-xs"
+                title="Sao lưu toàn bộ dữ liệu ra tệp JSON để khôi phục khi cần"
               >
-                <Download className="w-4 h-4" />
-                <span>Xuất file Excel CSV</span>
+                <Download className="w-3.5 h-3.5" />
+                <span>Sao lưu JSON</span>
               </button>
 
               <button
-                onClick={() => exportLogsToJSON(logs)}
-                className="flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl transition active:scale-95"
+                onClick={() => exportLogsToCSV(logs)}
+                className="flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 text-white font-bold text-xs py-2 px-2.5 rounded-xl transition active:scale-95 shadow-xs"
+                title="Xuất dữ liệu thô dạng CSV"
               >
-                <Download className="w-4 h-4" />
-                <span>Sao lưu JSON</span>
+                <Download className="w-3.5 h-3.5" />
+                <span>Xuất file CSV</span>
               </button>
             </div>
           </div>
