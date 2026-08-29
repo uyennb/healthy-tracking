@@ -1,4 +1,5 @@
-import ExcelJS from 'exceljs';
+// @ts-ignore
+import ExcelJS from 'exceljs/dist/exceljs.min.js';
 import { DailyLog, UserProfile, Language } from '../types/health';
 import { calculateSummary, formatWorkoutDurationHMS } from './dateUtils';
 import { format, parseISO } from 'date-fns';
@@ -12,11 +13,12 @@ export async function exportHealthReportToExcel(
   language: Language = 'vi'
 ): Promise<void> {
   const isVi = language === 'vi';
-  const summary = calculateSummary(logs);
+  const summary = calculateSummary(logs || []);
   const now = new Date();
   const dateExportStr = format(now, 'yyyy-MM-dd');
 
-  const workbook = new ExcelJS.Workbook();
+  const WorkbookClass = (ExcelJS as any).Workbook || (ExcelJS as any).default?.Workbook || (ExcelJS as any).default || ExcelJS;
+  const workbook = new WorkbookClass();
   workbook.creator = 'NutriFit Health Tracker';
   workbook.lastModifiedBy = 'NutriFit';
   workbook.created = now;
@@ -364,19 +366,51 @@ export async function exportHealthReportToExcel(
     row.height = 22;
   });
 
-  // Export to buffer & trigger browser download
+  // Export to buffer & trigger browser download or mobile share
   const buffer = await workbook.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
 
   const fileName = `Health_Tracking_Report_${dateExportStr}.xlsx`;
+
+  // Try Web Share API with File if supported (e.g. iOS Safari / PWA / Android)
+  if (typeof navigator !== 'undefined' && typeof window !== 'undefined') {
+    try {
+      const file = new File([blob], fileName, {
+        type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        lastModified: Date.now(),
+      });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        await navigator.share({
+          files: [file],
+          title: fileName,
+        });
+        return;
+      }
+    } catch (shareErr: any) {
+      if (shareErr?.name === 'AbortError') {
+        // User cancelled share dialog
+        return;
+      }
+      console.warn('Web Share API error, falling back to anchor download:', shareErr);
+    }
+  }
+
+  // Fallback: Standard browser download via anchor
   const url = window.URL.createObjectURL(blob);
   const anchor = document.createElement('a');
+  anchor.style.display = 'none';
   anchor.href = url;
   anchor.download = fileName;
   document.body.appendChild(anchor);
   anchor.click();
   document.body.removeChild(anchor);
-  window.URL.revokeObjectURL(url);
+
+  // Safe delayed cleanup - do NOT revoke immediately!
+  setTimeout(() => {
+    try {
+      window.URL.revokeObjectURL(url);
+    } catch {}
+  }, 60000);
 }

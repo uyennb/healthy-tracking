@@ -36,7 +36,7 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
       await exportHealthReportToExcel(logs, profile, language);
     } catch (err) {
       console.error('Error exporting Excel report:', err);
-      alert('Có lỗi xảy ra khi tạo file Excel. Vui lòng thử lại.');
+      alert(language === 'vi' ? 'Không thể xuất báo cáo Excel. Vui lòng thử lại.' : 'Could not export Excel report. Please try again.');
     } finally {
       setIsExportingExcel(false);
     }

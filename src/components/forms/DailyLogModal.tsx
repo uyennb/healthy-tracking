@@ -13,6 +13,45 @@ interface DailyLogModalProps {
   language?: Language;
 }
 
+interface FormDraft {
+  date: string;
+  caloIn: string;
+  protein: string;
+  carbs: string;
+  fats: string;
+  fiber: string;
+  workoutCalo: string;
+  caloOut: string;
+  note: string;
+  hours: string;
+  minutes: string;
+  seconds: string;
+}
+
+function normalizeNumericInput(raw: string, isDecimal = false): string {
+  if (raw === '') return '';
+  let val = raw.trim();
+  if (isDecimal) {
+    val = val.replace(/[^0-9.]/g, '');
+    const parts = val.split('.');
+    if (parts.length > 2) {
+      val = parts[0] + '.' + parts.slice(1).join('');
+    }
+  } else {
+    val = val.replace(/[^0-9]/g, '');
+  }
+
+  if (val === '') return '';
+
+  // Handle leading zeros (e.g. "05" -> "5", "01400" -> "1400", "00" -> "0")
+  if (val.length > 1 && val.startsWith('0') && !val.startsWith('0.')) {
+    val = val.replace(/^0+/, '');
+    if (val === '') val = '0';
+  }
+
+  return val;
+}
+
 export const DailyLogModal: React.FC<DailyLogModalProps> = ({
   isOpen,
   onClose,
@@ -22,93 +61,111 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
 }) => {
   const t = getTranslation(language);
 
-  const defaultNewEntry = {
+  const defaultNewEntryDraft: FormDraft = {
     date: format(new Date(), 'yyyy-MM-dd'),
-    caloIn: 1300,
-    protein: 95,
-    carbs: 140,
-    fats: 60,
-    fiber: 20,
-    workoutDuration: 2700, // 0:45:00 = 2700 seconds
-    workoutCalo: 200,
-    caloOut: 1400,
+    caloIn: '1300',
+    protein: '95',
+    carbs: '140',
+    fats: '60',
+    fiber: '20',
+    workoutCalo: '200',
+    caloOut: '1400',
     note: '',
+    hours: '0',
+    minutes: '45',
+    seconds: '0',
   };
 
-  const [formData, setFormData] = useState(defaultNewEntry);
-  const [timeHMS, setTimeHMS] = useState({ hours: 0, minutes: 45, seconds: 0 });
+  const [draft, setDraft] = useState<FormDraft>(defaultNewEntryDraft);
 
   useEffect(() => {
     if (initialLog) {
       const dur = initialLog.workoutDuration || 0;
       const b = breakSeconds(dur);
-      setTimeHMS(b);
-      setFormData({
+      setDraft({
         date: initialLog.date,
-        caloIn: initialLog.caloIn,
-        protein: initialLog.protein,
-        carbs: initialLog.carbs,
-        fats: initialLog.fats,
-        fiber: initialLog.fiber,
-        workoutDuration: dur,
-        workoutCalo: initialLog.workoutCalo,
-        caloOut: initialLog.caloOut,
+        caloIn: String(initialLog.caloIn ?? 0),
+        protein: String(initialLog.protein ?? 0),
+        carbs: String(initialLog.carbs ?? 0),
+        fats: String(initialLog.fats ?? 0),
+        fiber: String(initialLog.fiber ?? 0),
+        workoutCalo: String(initialLog.workoutCalo ?? 0),
+        caloOut: String(initialLog.caloOut ?? 0),
         note: initialLog.note || '',
+        hours: String(b.hours),
+        minutes: String(b.minutes),
+        seconds: String(b.seconds),
       });
     } else {
-      setTimeHMS({ hours: 0, minutes: 45, seconds: 0 });
-      setFormData({
-        ...defaultNewEntry,
+      setDraft({
+        ...defaultNewEntryDraft,
         date: format(new Date(), 'yyyy-MM-dd'),
       });
     }
   }, [initialLog, isOpen]);
 
-  const handleTimeChange = (h: number, m: number, s: number) => {
-    const safeH = Math.max(0, h);
-    const safeM = Math.max(0, Math.min(59, m));
-    const safeS = Math.max(0, Math.min(59, s));
-
-    setTimeHMS({ hours: safeH, minutes: safeM, seconds: safeS });
-    const totalSec = toTotalSeconds(safeH, safeM, safeS);
-    setFormData(prev => ({ ...prev, workoutDuration: totalSec }));
-  };
-
-  const handleNumericInput = (
+  const handleFieldChange = (
     field: 'caloIn' | 'caloOut' | 'protein' | 'carbs' | 'fats' | 'fiber' | 'workoutCalo',
-    valStr: string
+    rawVal: string
   ) => {
-    if (valStr === '') {
-      setFormData(prev => ({ ...prev, [field]: 0 }));
-      return;
+    const clean = normalizeNumericInput(rawVal);
+    setDraft(prev => ({ ...prev, [field]: clean }));
+  };
+
+  const handleHoursChange = (rawVal: string) => {
+    const clean = normalizeNumericInput(rawVal);
+    if (clean === '') {
+      setDraft(prev => ({ ...prev, hours: '' }));
+    } else {
+      const num = Math.min(24, Math.max(0, parseInt(clean, 10) || 0));
+      setDraft(prev => ({ ...prev, hours: String(num) }));
     }
-    const num = Number(valStr);
-    setFormData(prev => ({ ...prev, [field]: isNaN(num) ? 0 : num }));
   };
 
-  const handleHoursChange = (valStr: string) => {
-    const num = valStr === '' ? 0 : Number(valStr);
-    const safeH = Math.max(0, Math.min(24, isNaN(num) ? 0 : num));
-    handleTimeChange(safeH, timeHMS.minutes, timeHMS.seconds);
+  const handleMinutesChange = (rawVal: string) => {
+    const clean = normalizeNumericInput(rawVal);
+    if (clean === '') {
+      setDraft(prev => ({ ...prev, minutes: '' }));
+    } else {
+      const num = Math.min(59, Math.max(0, parseInt(clean, 10) || 0));
+      setDraft(prev => ({ ...prev, minutes: String(num) }));
+    }
   };
 
-  const handleMinutesChange = (valStr: string) => {
-    const num = valStr === '' ? 0 : Number(valStr);
-    const safeM = Math.max(0, Math.min(59, isNaN(num) ? 0 : num));
-    handleTimeChange(timeHMS.hours, safeM, timeHMS.seconds);
-  };
-
-  const handleSecondsChange = (valStr: string) => {
-    const num = valStr === '' ? 0 : Number(valStr);
-    const safeS = Math.max(0, Math.min(59, isNaN(num) ? 0 : num));
-    handleTimeChange(timeHMS.hours, timeHMS.minutes, safeS);
+  const handleSecondsChange = (rawVal: string) => {
+    const clean = normalizeNumericInput(rawVal);
+    if (clean === '') {
+      setDraft(prev => ({ ...prev, seconds: '' }));
+    } else {
+      const num = Math.min(59, Math.max(0, parseInt(clean, 10) || 0));
+      setDraft(prev => ({ ...prev, seconds: String(num) }));
+    }
   };
 
   if (!isOpen) return null;
 
+  const currentDurationSec = toTotalSeconds(
+    draft.hours === '' ? 0 : Number(draft.hours) || 0,
+    draft.minutes === '' ? 0 : Number(draft.minutes) || 0,
+    draft.seconds === '' ? 0 : Number(draft.seconds) || 0
+  );
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    onSave(initialLog?.id ? { ...formData, id: initialLog.id } : formData);
+    const finalData = {
+      date: draft.date,
+      caloIn: draft.caloIn === '' ? 0 : Number(draft.caloIn) || 0,
+      protein: draft.protein === '' ? 0 : Number(draft.protein) || 0,
+      carbs: draft.carbs === '' ? 0 : Number(draft.carbs) || 0,
+      fats: draft.fats === '' ? 0 : Number(draft.fats) || 0,
+      fiber: draft.fiber === '' ? 0 : Number(draft.fiber) || 0,
+      workoutDuration: currentDurationSec,
+      workoutCalo: draft.workoutCalo === '' ? 0 : Number(draft.workoutCalo) || 0,
+      caloOut: draft.caloOut === '' ? 0 : Number(draft.caloOut) || 0,
+      note: draft.note.trim(),
+    };
+
+    onSave(initialLog?.id ? { ...finalData, id: initialLog.id } : finalData);
     onClose();
   };
 
@@ -143,8 +200,8 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
             <input
               type="date"
               required
-              value={formData.date}
-              onChange={e => setFormData({ ...formData, date: e.target.value })}
+              value={draft.date}
+              onChange={e => setDraft(prev => ({ ...prev, date: e.target.value }))}
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2.5 text-sm font-semibold text-slate-800 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
             />
           </div>
@@ -162,12 +219,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.caloIn}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.caloIn}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleNumericInput('caloIn', e.target.value)}
+                    onChange={e => handleFieldChange('caloIn', e.target.value)}
+                    placeholder="0"
                     className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-sm font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">kcal</span>
@@ -180,12 +238,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.caloOut}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.caloOut}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleNumericInput('caloOut', e.target.value)}
+                    onChange={e => handleFieldChange('caloOut', e.target.value)}
+                    placeholder="0"
                     className="w-full bg-white border border-rose-200 rounded-xl px-3 py-2 text-sm font-bold text-rose-700 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">kcal</span>
@@ -207,12 +266,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.protein}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.protein}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleNumericInput('protein', e.target.value)}
+                    onChange={e => handleFieldChange('protein', e.target.value)}
+                    placeholder="0"
                     className="w-full bg-white border border-blue-200 rounded-xl px-3 py-2 text-sm font-bold text-blue-600 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">g</span>
@@ -225,12 +285,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.carbs}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.carbs}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleNumericInput('carbs', e.target.value)}
+                    onChange={e => handleFieldChange('carbs', e.target.value)}
+                    placeholder="0"
                     className="w-full bg-white border border-amber-200 rounded-xl px-3 py-2 text-sm font-bold text-amber-600 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">g</span>
@@ -243,12 +304,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.fats}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.fats}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleNumericInput('fats', e.target.value)}
+                    onChange={e => handleFieldChange('fats', e.target.value)}
+                    placeholder="0"
                     className="w-full bg-white border border-pink-200 rounded-xl px-3 py-2 text-sm font-bold text-pink-600 focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">g</span>
@@ -261,12 +323,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 </label>
                 <div className="relative">
                   <input
-                    type="number"
-                    min="0"
-                    required
-                    value={formData.fiber}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={draft.fiber}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleNumericInput('fiber', e.target.value)}
+                    onChange={e => handleFieldChange('fiber', e.target.value)}
+                    placeholder="0"
                     className="w-full bg-white border border-emerald-200 rounded-xl px-3 py-2 text-sm font-bold text-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
                   <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">g</span>
@@ -282,7 +345,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <Dumbbell className="w-3.5 h-3.5 text-purple-600" /> {t.workoutSection}
               </h3>
               <span className="text-xs font-black text-purple-800 bg-purple-100/90 px-2.5 py-0.5 rounded-lg border border-purple-200 font-mono shadow-sm">
-                ⏱️ {formatWorkoutDurationHMS(formData.workoutDuration)}
+                ⏱️ {formatWorkoutDurationHMS(currentDurationSec)}
               </span>
             </div>
 
@@ -294,12 +357,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div>
                   <div className="relative">
                     <input
-                      type="number"
-                      min="0"
-                      max="24"
-                      value={timeHMS.hours}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={draft.hours}
                       onFocus={e => e.target.select()}
                       onChange={e => handleHoursChange(e.target.value)}
+                      placeholder="0"
                       className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                     />
                     <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Giờ (h)</span>
@@ -309,12 +373,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div>
                   <div className="relative">
                     <input
-                      type="number"
-                      min="0"
-                      max="59"
-                      value={timeHMS.minutes}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={draft.minutes}
                       onFocus={e => e.target.select()}
                       onChange={e => handleMinutesChange(e.target.value)}
+                      placeholder="0"
                       className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                     />
                     <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Phút (m)</span>
@@ -324,12 +389,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div>
                   <div className="relative">
                     <input
-                      type="number"
-                      min="0"
-                      max="59"
-                      value={timeHMS.seconds}
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={draft.seconds}
                       onFocus={e => e.target.select()}
                       onChange={e => handleSecondsChange(e.target.value)}
+                      placeholder="0"
                       className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                     />
                     <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Giây (s)</span>
@@ -344,12 +410,13 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
               </label>
               <div className="relative">
                 <input
-                  type="number"
-                  min="0"
-                  required
-                  value={formData.workoutCalo}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={draft.workoutCalo}
                   onFocus={e => e.target.select()}
-                  onChange={e => handleNumericInput('workoutCalo', e.target.value)}
+                  onChange={e => handleFieldChange('workoutCalo', e.target.value)}
+                  placeholder="0"
                   className="w-full bg-white border border-purple-200 rounded-xl px-3 py-2 text-sm font-bold text-purple-600 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                 />
                 <span className="absolute right-3 top-2.5 text-xs font-medium text-slate-400">kcal</span>
@@ -362,8 +429,8 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
             <label className="block text-xs font-bold text-slate-700 mb-1">{t.noteLabel}</label>
             <input
               type="text"
-              value={formData.note}
-              onChange={e => setFormData({ ...formData, note: e.target.value })}
+              value={draft.note}
+              onChange={e => setDraft(prev => ({ ...prev, note: e.target.value }))}
               placeholder="VD: Chạy bộ sáng 5km, tập ngực 45p..."
               className="w-full bg-slate-50 border border-slate-200 rounded-xl px-3.5 py-2 text-xs font-medium text-slate-700 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
             />
