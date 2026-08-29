@@ -306,7 +306,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
           <div>
             <h4 className="font-extrabold text-slate-800 text-xs">{language === 'vi' ? 'Quản lý Dữ liệu App' : 'App Data Management'}</h4>
-            <p className="text-[10px] text-slate-400 font-medium">{language === 'vi' ? 'Xuất CSV / JSON, Khôi phục sao lưu' : 'Export CSV / JSON, Restore backup'}</p>
+            <p className="text-[10px] text-slate-400 font-medium">{language === 'vi' ? 'Xuất Excel (.xlsx) / JSON, Khôi phục sao lưu' : 'Export Excel (.xlsx) / JSON, Restore backup'}</p>
           </div>
         </div>
 

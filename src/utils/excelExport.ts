@@ -1,8 +1,14 @@
 // @ts-ignore
 import ExcelJS from 'exceljs/dist/exceljs.min.js';
 import { DailyLog, UserProfile, Language } from '../types/health';
-import { calculateSummary, formatWorkoutDurationHMS } from './dateUtils';
+import { calculateSummary, formatWorkoutDurationHMS, breakSeconds } from './dateUtils';
 import { format, parseISO } from 'date-fns';
+
+function formatDurationHmsFull(totalSecondsVal: number): string {
+  const { hours, minutes, seconds } = breakSeconds(totalSecondsVal || 0);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${hours}:${pad(minutes)}:${pad(seconds)}`;
+}
 
 /**
  * Export health data to a professionally formatted Excel (.xlsx) report
@@ -13,9 +19,23 @@ export async function exportHealthReportToExcel(
   language: Language = 'vi'
 ): Promise<void> {
   const isVi = language === 'vi';
-  const summary = calculateSummary(logs || []);
+  const safeLogs = logs || [];
+  const summary = calculateSummary(safeLogs);
   const now = new Date();
   const dateExportStr = format(now, 'yyyy-MM-dd');
+
+  // Calculate date range from logs
+  let dateRangeStr = isVi ? 'Chưa có dữ liệu' : 'No data recorded';
+  if (safeLogs.length > 0) {
+    const sortedDates = [...safeLogs].map(l => l.date).filter(Boolean).sort();
+    let earliest = sortedDates[0];
+    let latest = sortedDates[sortedDates.length - 1];
+    try {
+      earliest = format(parseISO(earliest), 'dd/MM/yyyy');
+      latest = format(parseISO(latest), 'dd/MM/yyyy');
+    } catch {}
+    dateRangeStr = earliest === latest ? earliest : `${earliest} - ${latest}`;
+  }
 
   const WorkbookClass = (ExcelJS as any).Workbook || (ExcelJS as any).default?.Workbook || (ExcelJS as any).default || ExcelJS;
   const workbook = new WorkbookClass();
@@ -27,23 +47,23 @@ export async function exportHealthReportToExcel(
   // ---------------------------------------------------------
   // SHEET 1: Health Summary
   // ---------------------------------------------------------
-  const summarySheet = workbook.addWorksheet(isVi ? 'Health Summary' : 'Health Summary', {
+  const summarySheet = workbook.addWorksheet('Health Summary', {
     views: [{ showGridLines: true }],
   });
 
   // Sheet 1 Column widths
   summarySheet.columns = [
-    { width: 5 },  // Margin column A
-    { width: 34 }, // Column B - Indicator / Metric name
-    { width: 22 }, // Column C - Value
+    { width: 4 },  // Margin column A
+    { width: 36 }, // Column B - Indicator / Metric name
+    { width: 24 }, // Column C - Value
     { width: 18 }, // Column D - Unit
-    { width: 32 }, // Column E - Notes / Evaluation
+    { width: 34 }, // Column E - Notes / Evaluation
   ];
 
   // Title Banner
   summarySheet.mergeCells('B2:E2');
   const titleCell = summarySheet.getCell('B2');
-  titleCell.value = isVi ? 'BÁO CÁO THEO DÕI SỨC KHỎE & DINH DƯỠNG' : 'HEALTH & NUTRITION TRACKING REPORT';
+  titleCell.value = 'HEALTH TRACKING REPORT';
   titleCell.font = { name: 'Arial', size: 16, bold: true, color: { argb: 'FFFFFFFF' } };
   titleCell.fill = {
     type: 'pattern',
@@ -51,14 +71,14 @@ export async function exportHealthReportToExcel(
     fgColor: { argb: 'FF0F766E' }, // Teal 700
   };
   titleCell.alignment = { vertical: 'middle', horizontal: 'center' };
-  summarySheet.getRow(2).height = 40;
+  summarySheet.getRow(2).height = 38;
 
   // Subtitle / App branding
   summarySheet.mergeCells('B3:E3');
   const subCell = summarySheet.getCell('B3');
   subCell.value = isVi
-    ? `NutriFit Tracker • Ngày xuất báo cáo: ${format(now, 'dd/MM/yyyy HH:mm')}`
-    : `NutriFit Tracker • Exported: ${format(now, 'yyyy-MM-dd HH:mm')}`;
+    ? `NutriFit Health Tracker • Ngày xuất: ${format(now, 'dd/MM/yyyy HH:mm')}`
+    : `NutriFit Health Tracker • Exported: ${format(now, 'yyyy-MM-dd HH:mm')}`;
   subCell.font = { name: 'Arial', size: 10, italic: true, color: { argb: 'FF475569' } };
   subCell.alignment = { vertical: 'middle', horizontal: 'center' };
   summarySheet.getRow(3).height = 20;
@@ -108,7 +128,7 @@ export async function exportHealthReportToExcel(
   tableHeaderRow.values = [
     '',
     isVi ? 'Chỉ Số Sức Khỏe' : 'Health Metric',
-    isVi ? 'Giá Trị Trung Bình' : 'Average Value',
+    isVi ? 'Giá Trị' : 'Value',
     isVi ? 'Đơn Vị' : 'Unit',
     isVi ? 'Đánh Giá / Trạng Thái' : 'Status / Evaluation',
   ];
@@ -128,70 +148,77 @@ export async function exportHealthReportToExcel(
 
   const summaryData = [
     {
-      metric: isVi ? 'Số ngày ghi nhận dữ liệu' : 'Total Recorded Days',
+      metric: isVi ? 'Khoảng ngày có dữ liệu' : 'Tracked Date Range',
+      val: dateRangeStr,
+      unit: isVi ? 'thời gian' : 'period',
+      eval: isVi ? `${summary.totalDays} ngày được ghi nhận` : `${summary.totalDays} days recorded`,
+      numFormat: undefined,
+    },
+    {
+      metric: isVi ? 'Số ngày có dữ liệu' : 'Total Recorded Days',
       val: summary.totalDays,
       unit: isVi ? 'ngày' : 'days',
-      eval: isVi ? `${summary.totalDays} ngày được theo dõi` : `${summary.totalDays} days tracked`,
+      eval: isVi ? `Tổng số ngày theo dõi` : `Total tracked days`,
       numFormat: '#,##0',
     },
     {
-      metric: isVi ? 'Calo Nạp Vào (Calorie Intake)' : 'Calorie Intake (Avg)',
+      metric: isVi ? 'Calorie Intake trung bình' : 'Average Calorie Intake',
       val: summary.avgCaloIn,
       unit: 'kcal / ' + (isVi ? 'ngày' : 'day'),
       eval: isVi ? 'Năng lượng hấp thụ hàng ngày' : 'Daily caloric intake',
       numFormat: '#,##0',
     },
     {
-      metric: isVi ? 'Calo Tiêu Thụ (TDEE Out)' : 'Total Energy Expenditure (TDEE)',
+      metric: isVi ? 'TDEE trung bình' : 'Average TDEE (Calo Out)',
       val: summary.avgCaloOut,
       unit: 'kcal / ' + (isVi ? 'ngày' : 'day'),
-      eval: isVi ? 'Tổng năng lượng đốt hàng ngày' : 'Daily total energy burned',
+      eval: isVi ? 'Tổng năng lượng tiêu thụ hàng ngày' : 'Daily total energy expenditure',
       numFormat: '#,##0',
     },
     {
-      metric: isVi ? 'Cân Bằng Năng Lượng (Net Deficit/Surplus)' : 'Calorie Balance (Net)',
+      metric: isVi ? 'Calorie Balance trung bình' : 'Average Calorie Balance (Net)',
       val: summary.avgDeficit,
       unit: 'kcal / ' + (isVi ? 'ngày' : 'day'),
       eval: balanceEval,
       numFormat: '+#,##0;-#,##0;0',
     },
     {
-      metric: isVi ? 'Đạm (Protein) trung bình' : 'Average Protein',
+      metric: isVi ? 'Protein trung bình (Đạm)' : 'Average Protein',
       val: summary.avgProtein,
       unit: 'g / ' + (isVi ? 'ngày' : 'day'),
       eval: isVi ? 'Hỗ trợ duy trì & xây dựng cơ' : 'Muscle maintenance & recovery',
       numFormat: '#,##0',
     },
     {
-      metric: isVi ? 'Tinh bột (Carbohydrates) trung bình' : 'Average Carbohydrates',
+      metric: isVi ? 'Carbs trung bình (Tinh bột)' : 'Average Carbohydrates',
       val: summary.avgCarbs,
       unit: 'g / ' + (isVi ? 'ngày' : 'day'),
       eval: isVi ? 'Nguồn năng lượng chính' : 'Primary energy source',
       numFormat: '#,##0',
     },
     {
-      metric: isVi ? 'Chất béo (Fats) trung bình' : 'Average Fats',
+      metric: isVi ? 'Fat trung bình (Chất béo)' : 'Average Fats',
       val: summary.avgFats,
       unit: 'g / ' + (isVi ? 'ngày' : 'day'),
       eval: isVi ? 'Chất béo thiết yếu cho cơ thể' : 'Essential dietary lipids',
       numFormat: '#,##0',
     },
     {
-      metric: isVi ? 'Chất xơ (Dietary Fiber) trung bình' : 'Average Dietary Fiber',
+      metric: isVi ? 'Fiber trung bình (Chất xơ)' : 'Average Dietary Fiber',
       val: summary.avgFiber,
       unit: 'g / ' + (isVi ? 'ngày' : 'day'),
       eval: isVi ? 'Hỗ trợ hệ tiêu hóa khỏe mạnh' : 'Digestive health support',
       numFormat: '#,##0',
     },
     {
-      metric: isVi ? 'Thời gian tập trung bình (Workout Avg)' : 'Average Workout Duration',
-      val: formatWorkoutDurationHMS(summary.avgWorkoutDuration),
+      metric: isVi ? 'Workout Duration trung bình' : 'Average Workout Duration',
+      val: formatDurationHmsFull(summary.avgWorkoutDuration),
       unit: 'H:MM:SS',
-      eval: isVi ? `Tổng: ${formatWorkoutDurationHMS(summary.totalWorkoutDuration)}` : `Total: ${formatWorkoutDurationHMS(summary.totalWorkoutDuration)}`,
+      eval: isVi ? `Tổng: ${formatDurationHmsFull(summary.totalWorkoutDuration)}` : `Total: ${formatDurationHmsFull(summary.totalWorkoutDuration)}`,
       numFormat: undefined,
     },
     {
-      metric: isVi ? 'Calo đốt bài tập (Exercise Burn)' : 'Exercise Calories Burned',
+      metric: isVi ? 'Exercise Burn trung bình' : 'Average Exercise Burn',
       val: summary.avgWorkoutCalo,
       unit: 'kcal / ' + (isVi ? 'ngày' : 'day'),
       eval: isVi ? `Tổng đốt: ${summary.totalWorkoutCalo.toLocaleString()} kcal` : `Total burned: ${summary.totalWorkoutCalo.toLocaleString()} kcal`,
@@ -235,7 +262,7 @@ export async function exportHealthReportToExcel(
   // ---------------------------------------------------------
   // SHEET 2: Detailed Data
   // ---------------------------------------------------------
-  const detailSheet = workbook.addWorksheet(isVi ? 'Detailed Data' : 'Detailed Data', {
+  const detailSheet = workbook.addWorksheet('Detailed Data', {
     views: [
       {
         state: 'frozen',
@@ -249,16 +276,16 @@ export async function exportHealthReportToExcel(
   // Column definitions with sensible widths
   detailSheet.columns = [
     { key: 'date', width: 14 },
-    { key: 'caloIn', width: 16 },
-    { key: 'protein', width: 13 },
-    { key: 'carbs', width: 13 },
-    { key: 'fats', width: 13 },
-    { key: 'fiber', width: 13 },
+    { key: 'caloIn', width: 18 },
+    { key: 'caloOut', width: 16 },
+    { key: 'deficit', width: 18 },
+    { key: 'protein', width: 14 },
+    { key: 'carbs', width: 14 },
+    { key: 'fats', width: 14 },
+    { key: 'fiber', width: 14 },
     { key: 'workout', width: 16 },
     { key: 'workoutCalo', width: 16 },
-    { key: 'caloOut', width: 16 },
-    { key: 'deficit', width: 16 },
-    { key: 'note', width: 30 },
+    { key: 'note', width: 32 },
   ];
 
   // Top Banner Row
@@ -273,17 +300,17 @@ export async function exportHealthReportToExcel(
   // Table Headers
   const detailHeaderRow = detailSheet.getRow(2);
   detailHeaderRow.values = [
-    isVi ? 'Ngày' : 'Date',
-    isVi ? 'Calo-In (kcal)' : 'Calo-In (kcal)',
+    isVi ? 'Date (Ngày)' : 'Date',
+    isVi ? 'Calorie Intake (kcal)' : 'Calorie Intake (kcal)',
+    isVi ? 'TDEE (kcal)' : 'TDEE (kcal)',
+    isVi ? 'Calorie Balance (kcal)' : 'Calorie Balance (kcal)',
     isVi ? 'Protein (g)' : 'Protein (g)',
     isVi ? 'Carbs (g)' : 'Carbs (g)',
-    isVi ? 'Fats (g)' : 'Fats (g)',
+    isVi ? 'Fat (g)' : 'Fat (g)',
     isVi ? 'Fiber (g)' : 'Fiber (g)',
     isVi ? 'Workout' : 'Workout',
-    isVi ? 'Calo Tập (kcal)' : 'Exercise Calo',
-    isVi ? 'TDEE Out (kcal)' : 'TDEE Out (kcal)',
-    isVi ? 'Net Deficit (kcal)' : 'Net Deficit (kcal)',
-    isVi ? 'Ghi Chú' : 'Notes',
+    isVi ? 'Exercise Burn (kcal)' : 'Exercise Burn (kcal)',
+    isVi ? 'Note' : 'Note',
   ];
 
   for (let c = 1; c <= 11; c++) {
@@ -301,7 +328,7 @@ export async function exportHealthReportToExcel(
   };
 
   // Sort logs descending (newest first)
-  const sortedLogs = [...logs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const sortedLogs = [...safeLogs].sort((a, b) => String(b.date).localeCompare(String(a.date)));
 
   sortedLogs.forEach((log, index) => {
     const deficit = log.caloIn - log.caloOut;
@@ -316,14 +343,14 @@ export async function exportHealthReportToExcel(
     row.values = [
       dateFormatted,
       log.caloIn,
+      log.caloOut,
+      deficit,
       log.protein,
       log.carbs,
       log.fats,
       log.fiber,
-      formatWorkoutDurationHMS(log.workoutDuration),
+      formatDurationHmsFull(log.workoutDuration),
       log.workoutCalo,
-      log.caloOut,
-      deficit,
       log.note || '',
     ];
 
@@ -343,24 +370,24 @@ export async function exportHealthReportToExcel(
 
     // Number formats
     row.getCell(2).numFmt = '#,##0'; // CaloIn
-    row.getCell(3).numFmt = '#,##0'; // Protein
-    row.getCell(4).numFmt = '#,##0'; // Carbs
-    row.getCell(5).numFmt = '#,##0'; // Fats
-    row.getCell(6).numFmt = '#,##0'; // Fiber
-    row.getCell(8).numFmt = '#,##0'; // WorkoutCalo
-    row.getCell(9).numFmt = '#,##0'; // CaloOut
-    row.getCell(10).numFmt = '+#,##0;-#,##0;0'; // Deficit
+    row.getCell(3).numFmt = '#,##0'; // TDEE (CaloOut)
+    row.getCell(4).numFmt = '+#,##0;-#,##0;0'; // Calorie Balance (Deficit)
+    row.getCell(5).numFmt = '#,##0'; // Protein
+    row.getCell(6).numFmt = '#,##0'; // Carbs
+    row.getCell(7).numFmt = '#,##0'; // Fats
+    row.getCell(8).numFmt = '#,##0'; // Fiber
+    row.getCell(10).numFmt = '#,##0'; // WorkoutCalo (Exercise Burn)
 
     // Highlight specific key columns
     row.getCell(2).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FF4338CA' } }; // Indigo
-    row.getCell(7).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FF7E22CE' } }; // Purple
-    row.getCell(9).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FFE11D48' } }; // Rose
+    row.getCell(3).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FFE11D48' } }; // Rose
+    row.getCell(9).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FF7E22CE' } }; // Purple
 
     // Color code Net Deficit: negative (deficit) = emerald green, positive (surplus) = amber
     if (deficit <= 0) {
-      row.getCell(10).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FF047857' } }; // Emerald
+      row.getCell(4).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FF047857' } }; // Emerald
     } else {
-      row.getCell(10).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FFB45309' } }; // Amber
+      row.getCell(4).font = { name: 'Arial', size: 9.5, bold: true, color: { argb: 'FFB45309' } }; // Amber
     }
 
     row.height = 22;

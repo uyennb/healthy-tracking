@@ -106,26 +106,15 @@ export const DataManagementModal: React.FC<DataManagementModalProps> = ({
               <span>{language === 'vi' ? 'Xuất Báo Cáo Excel (.xlsx)' : 'Export Excel Report (.xlsx)'}</span>
             </button>
 
-            {/* Backup & CSV secondary options */}
-            <div className="grid grid-cols-2 gap-2">
-              <button
-                onClick={() => exportLogsToJSON(logs)}
-                className="flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2 px-2.5 rounded-xl transition active:scale-95 shadow-xs"
-                title="Sao lưu toàn bộ dữ liệu ra tệp JSON để khôi phục khi cần"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Sao lưu JSON</span>
-              </button>
-
-              <button
-                onClick={() => exportLogsToCSV(logs)}
-                className="flex items-center justify-center gap-1.5 bg-slate-700 hover:bg-slate-800 text-white font-bold text-xs py-2 px-2.5 rounded-xl transition active:scale-95 shadow-xs"
-                title="Xuất dữ liệu thô dạng CSV"
-              >
-                <Download className="w-3.5 h-3.5" />
-                <span>Xuất file CSV</span>
-              </button>
-            </div>
+            {/* JSON Backup option */}
+            <button
+              onClick={() => exportLogsToJSON(logs)}
+              className="w-full flex items-center justify-center gap-1.5 bg-indigo-600 hover:bg-indigo-700 text-white font-bold text-xs py-2.5 px-3 rounded-xl transition active:scale-95 shadow-xs"
+              title="Sao lưu toàn bộ dữ liệu ra tệp JSON để khôi phục khi cần"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{language === 'vi' ? 'Sao Lưu Dữ Liệu JSON' : 'Backup JSON Data'}</span>
+            </button>
           </div>
 
           {/* Import Option */}
