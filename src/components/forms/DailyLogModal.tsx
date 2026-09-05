@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { X, Save, Calendar, Dumbbell, Utensils, Zap, ShieldCheck } from 'lucide-react';
 import { DailyLog, Language } from '../../types/health';
 import { format } from 'date-fns';
@@ -31,25 +31,46 @@ interface FormDraft {
 function normalizeNumericInput(raw: string, isDecimal = false): string {
   if (raw === '') return '';
   let val = raw.trim();
+
   if (isDecimal) {
-    val = val.replace(/[^0-9.]/g, '');
-    const parts = val.split('.');
-    if (parts.length > 2) {
-      val = parts[0] + '.' + parts.slice(1).join('');
+    // Allow digits, dot, and comma
+    val = val.replace(/[^0-9.,]/g, '');
+
+    // Allow at most one decimal separator (. or ,)
+    const sepIndex = val.search(/[.,]/);
+    if (sepIndex !== -1) {
+      const firstSep = val[sepIndex];
+      const integerPart = val.slice(0, sepIndex).replace(/[.,]/g, '');
+      const decimalPart = val.slice(sepIndex + 1).replace(/[.,]/g, '');
+      val = integerPart + firstSep + decimalPart;
+    }
+
+    if (val === '') return '';
+
+    // Handle leading zeros while preserving "0", "0.", "0,", "0.x", "0,x"
+    if (val.length > 1 && val.startsWith('0') && val[1] !== '.' && val[1] !== ',') {
+      val = val.replace(/^0+/, '');
+      if (val === '' || val.startsWith('.') || val.startsWith(',')) {
+        val = '0' + val;
+      }
     }
   } else {
     val = val.replace(/[^0-9]/g, '');
-  }
-
-  if (val === '') return '';
-
-  // Handle leading zeros (e.g. "05" -> "5", "01400" -> "1400", "00" -> "0")
-  if (val.length > 1 && val.startsWith('0') && !val.startsWith('0.')) {
-    val = val.replace(/^0+/, '');
-    if (val === '') val = '0';
+    if (val === '') return '';
+    if (val.length > 1 && val.startsWith('0')) {
+      val = val.replace(/^0+/, '');
+      if (val === '') val = '0';
+    }
   }
 
   return val;
+}
+
+function parseNumericValue(val: string): number {
+  if (!val || val.trim() === '') return 0;
+  const normalized = val.trim().replace(',', '.');
+  const num = Number(normalized);
+  return isNaN(num) ? 0 : num;
 }
 
 export const DailyLogModal: React.FC<DailyLogModalProps> = ({
@@ -61,6 +82,10 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
 }) => {
   const t = getTranslation(language);
 
+  const hoursInputRef = useRef<HTMLInputElement>(null);
+  const minutesInputRef = useRef<HTMLInputElement>(null);
+  const secondsInputRef = useRef<HTMLInputElement>(null);
+
   const defaultNewEntryDraft: FormDraft = {
     date: format(new Date(), 'yyyy-MM-dd'),
     caloIn: '1300',
@@ -71,9 +96,9 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
     workoutCalo: '200',
     caloOut: '1400',
     note: '',
-    hours: '0',
+    hours: '00',
     minutes: '45',
-    seconds: '0',
+    seconds: '00',
   };
 
   const [draft, setDraft] = useState<FormDraft>(defaultNewEntryDraft);
@@ -92,9 +117,9 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
         workoutCalo: String(initialLog.workoutCalo ?? 0),
         caloOut: String(initialLog.caloOut ?? 0),
         note: initialLog.note || '',
-        hours: String(b.hours),
-        minutes: String(b.minutes),
-        seconds: String(b.seconds),
+        hours: String(b.hours).padStart(2, '0'),
+        minutes: String(b.minutes).padStart(2, '0'),
+        seconds: String(b.seconds).padStart(2, '0'),
       });
     } else {
       setDraft({
@@ -106,62 +131,124 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
 
   const handleFieldChange = (
     field: 'caloIn' | 'caloOut' | 'protein' | 'carbs' | 'fats' | 'fiber' | 'workoutCalo',
-    rawVal: string
+    rawVal: string,
+    isDecimal = false
   ) => {
-    const clean = normalizeNumericInput(rawVal);
+    const clean = normalizeNumericInput(rawVal, isDecimal);
     setDraft(prev => ({ ...prev, [field]: clean }));
   };
 
   const handleHoursChange = (rawVal: string) => {
-    const clean = normalizeNumericInput(rawVal);
-    if (clean === '') {
-      setDraft(prev => ({ ...prev, hours: '' }));
-    } else {
-      const num = Math.min(24, Math.max(0, parseInt(clean, 10) || 0));
-      setDraft(prev => ({ ...prev, hours: String(num) }));
+    const digits = rawVal.replace(/[^0-9]/g, '').slice(0, 2);
+    let clean = digits;
+    if (digits.length === 2) {
+      const num = parseInt(digits, 10);
+      if (num > 24) clean = '24';
+    }
+    setDraft(prev => ({ ...prev, hours: clean }));
+    if (clean.length === 2 && minutesInputRef.current) {
+      minutesInputRef.current.focus();
+      minutesInputRef.current.select();
     }
   };
 
   const handleMinutesChange = (rawVal: string) => {
-    const clean = normalizeNumericInput(rawVal);
-    if (clean === '') {
-      setDraft(prev => ({ ...prev, minutes: '' }));
-    } else {
-      const num = Math.min(59, Math.max(0, parseInt(clean, 10) || 0));
-      setDraft(prev => ({ ...prev, minutes: String(num) }));
+    const digits = rawVal.replace(/[^0-9]/g, '').slice(0, 2);
+    let clean = digits;
+    if (digits.length === 2) {
+      const num = parseInt(digits, 10);
+      if (num > 59) clean = '59';
+    }
+    setDraft(prev => ({ ...prev, minutes: clean }));
+    if (clean.length === 2 && secondsInputRef.current) {
+      secondsInputRef.current.focus();
+      secondsInputRef.current.select();
     }
   };
 
   const handleSecondsChange = (rawVal: string) => {
-    const clean = normalizeNumericInput(rawVal);
-    if (clean === '') {
-      setDraft(prev => ({ ...prev, seconds: '' }));
-    } else {
-      const num = Math.min(59, Math.max(0, parseInt(clean, 10) || 0));
-      setDraft(prev => ({ ...prev, seconds: String(num) }));
+    const digits = rawVal.replace(/[^0-9]/g, '').slice(0, 2);
+    let clean = digits;
+    if (digits.length === 2) {
+      const num = parseInt(digits, 10);
+      if (num > 59) clean = '59';
+    }
+    setDraft(prev => ({ ...prev, seconds: clean }));
+  };
+
+  const handleTimeKeyDown = (
+    e: React.KeyboardEvent<HTMLInputElement>,
+    field: 'hours' | 'minutes' | 'seconds'
+  ) => {
+    if (e.key === 'Backspace') {
+      if (field === 'minutes' && (!draft.minutes || draft.minutes === '')) {
+        e.preventDefault();
+        if (hoursInputRef.current) {
+          hoursInputRef.current.focus();
+        }
+      } else if (field === 'seconds' && (!draft.seconds || draft.seconds === '')) {
+        e.preventDefault();
+        if (minutesInputRef.current) {
+          minutesInputRef.current.focus();
+        }
+      }
+    }
+  };
+
+  const handleTimePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
+    const pasted = e.clipboardData.getData('text').trim();
+    const parts = pasted.split(/[:\-\s]+/);
+    if (parts.length >= 2 && parts.every(p => /^\d+$/.test(p))) {
+      e.preventDefault();
+      if (parts.length >= 3) {
+        const h = Math.min(24, parseInt(parts[0], 10) || 0);
+        const m = Math.min(59, parseInt(parts[1], 10) || 0);
+        const s = Math.min(59, parseInt(parts[2], 10) || 0);
+        setDraft(prev => ({
+          ...prev,
+          hours: String(h).padStart(2, '0'),
+          minutes: String(m).padStart(2, '0'),
+          seconds: String(s).padStart(2, '0'),
+        }));
+        if (secondsInputRef.current) {
+          secondsInputRef.current.focus();
+        }
+      } else if (parts.length === 2) {
+        const m = Math.min(59, parseInt(parts[0], 10) || 0);
+        const s = Math.min(59, parseInt(parts[1], 10) || 0);
+        setDraft(prev => ({
+          ...prev,
+          hours: '00',
+          minutes: String(m).padStart(2, '0'),
+          seconds: String(s).padStart(2, '0'),
+        }));
+        if (secondsInputRef.current) {
+          secondsInputRef.current.focus();
+        }
+      }
     }
   };
 
   if (!isOpen) return null;
 
   const currentDurationSec = toTotalSeconds(
-    draft.hours === '' ? 0 : Number(draft.hours) || 0,
-    draft.minutes === '' ? 0 : Number(draft.minutes) || 0,
-    draft.seconds === '' ? 0 : Number(draft.seconds) || 0
+    parseInt(draft.hours, 10) || 0,
+    parseInt(draft.minutes, 10) || 0,
+    parseInt(draft.seconds, 10) || 0
   );
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const finalData = {
       date: draft.date,
-      caloIn: draft.caloIn === '' ? 0 : Number(draft.caloIn) || 0,
-      protein: draft.protein === '' ? 0 : Number(draft.protein) || 0,
-      carbs: draft.carbs === '' ? 0 : Number(draft.carbs) || 0,
-      fats: draft.fats === '' ? 0 : Number(draft.fats) || 0,
-      fiber: draft.fiber === '' ? 0 : Number(draft.fiber) || 0,
+      caloIn: parseNumericValue(draft.caloIn),
+      protein: parseNumericValue(draft.protein),
+      carbs: parseNumericValue(draft.carbs),
+      fats: parseNumericValue(draft.fats),
+      fiber: parseNumericValue(draft.fiber),
       workoutDuration: currentDurationSec,
-      workoutCalo: draft.workoutCalo === '' ? 0 : Number(draft.workoutCalo) || 0,
-      caloOut: draft.caloOut === '' ? 0 : Number(draft.caloOut) || 0,
+      workoutCalo: parseNumericValue(draft.workoutCalo),
+      caloOut: parseNumericValue(draft.caloOut),
       note: draft.note.trim(),
     };
 
@@ -224,7 +311,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                     pattern="[0-9]*"
                     value={draft.caloIn}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleFieldChange('caloIn', e.target.value)}
+                    onChange={e => handleFieldChange('caloIn', e.target.value, false)}
                     placeholder="0"
                     className="w-full bg-white border border-indigo-200 rounded-xl px-3 py-2 text-sm font-bold text-indigo-700 focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                   />
@@ -243,7 +330,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                     pattern="[0-9]*"
                     value={draft.caloOut}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleFieldChange('caloOut', e.target.value)}
+                    onChange={e => handleFieldChange('caloOut', e.target.value, false)}
                     placeholder="0"
                     className="w-full bg-white border border-rose-200 rounded-xl px-3 py-2 text-sm font-bold text-rose-700 focus:ring-2 focus:ring-rose-500/20 focus:border-rose-500"
                   />
@@ -267,11 +354,10 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div className="relative">
                   <input
                     type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
+                    inputMode="decimal"
                     value={draft.protein}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleFieldChange('protein', e.target.value)}
+                    onChange={e => handleFieldChange('protein', e.target.value, true)}
                     placeholder="0"
                     className="w-full bg-white border border-blue-200 rounded-xl px-3 py-2 text-sm font-bold text-blue-600 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
                   />
@@ -286,11 +372,10 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div className="relative">
                   <input
                     type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
+                    inputMode="decimal"
                     value={draft.carbs}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleFieldChange('carbs', e.target.value)}
+                    onChange={e => handleFieldChange('carbs', e.target.value, true)}
                     placeholder="0"
                     className="w-full bg-white border border-amber-200 rounded-xl px-3 py-2 text-sm font-bold text-amber-600 focus:ring-2 focus:ring-amber-500/20 focus:border-amber-500"
                   />
@@ -305,11 +390,10 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div className="relative">
                   <input
                     type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
+                    inputMode="decimal"
                     value={draft.fats}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleFieldChange('fats', e.target.value)}
+                    onChange={e => handleFieldChange('fats', e.target.value, true)}
                     placeholder="0"
                     className="w-full bg-white border border-pink-200 rounded-xl px-3 py-2 text-sm font-bold text-pink-600 focus:ring-2 focus:ring-pink-500/20 focus:border-pink-500"
                   />
@@ -324,11 +408,10 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div className="relative">
                   <input
                     type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
+                    inputMode="decimal"
                     value={draft.fiber}
                     onFocus={e => e.target.select()}
-                    onChange={e => handleFieldChange('fiber', e.target.value)}
+                    onChange={e => handleFieldChange('fiber', e.target.value, true)}
                     placeholder="0"
                     className="w-full bg-white border border-emerald-200 rounded-xl px-3 py-2 text-sm font-bold text-emerald-600 focus:ring-2 focus:ring-emerald-500/20 focus:border-emerald-500"
                   />
@@ -357,13 +440,17 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div>
                   <div className="relative">
                     <input
+                      ref={hoursInputRef}
                       type="text"
                       inputMode="numeric"
                       pattern="[0-9]*"
+                      maxLength={2}
                       value={draft.hours}
                       onFocus={e => e.target.select()}
                       onChange={e => handleHoursChange(e.target.value)}
-                      placeholder="0"
+                      onKeyDown={e => handleTimeKeyDown(e, 'hours')}
+                      onPaste={handleTimePaste}
+                      placeholder="00"
                       className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                     />
                     <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Giờ (h)</span>
@@ -373,13 +460,17 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div>
                   <div className="relative">
                     <input
+                      ref={minutesInputRef}
                       type="text"
                       inputMode="numeric"
                       pattern="[0-9]*"
+                      maxLength={2}
                       value={draft.minutes}
                       onFocus={e => e.target.select()}
                       onChange={e => handleMinutesChange(e.target.value)}
-                      placeholder="0"
+                      onKeyDown={e => handleTimeKeyDown(e, 'minutes')}
+                      onPaste={handleTimePaste}
+                      placeholder="00"
                       className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                     />
                     <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Phút (m)</span>
@@ -389,13 +480,17 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                 <div>
                   <div className="relative">
                     <input
+                      ref={secondsInputRef}
                       type="text"
                       inputMode="numeric"
                       pattern="[0-9]*"
+                      maxLength={2}
                       value={draft.seconds}
                       onFocus={e => e.target.select()}
                       onChange={e => handleSecondsChange(e.target.value)}
-                      placeholder="0"
+                      onKeyDown={e => handleTimeKeyDown(e, 'seconds')}
+                      onPaste={handleTimePaste}
+                      placeholder="00"
                       className="w-full bg-white border border-purple-200 rounded-xl px-2 py-2 text-sm font-extrabold text-purple-700 text-center focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                     />
                     <span className="block text-[10px] font-bold text-slate-400 text-center mt-0.5">Giây (s)</span>
@@ -415,7 +510,7 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
                   pattern="[0-9]*"
                   value={draft.workoutCalo}
                   onFocus={e => e.target.select()}
-                  onChange={e => handleFieldChange('workoutCalo', e.target.value)}
+                  onChange={e => handleFieldChange('workoutCalo', e.target.value, false)}
                   placeholder="0"
                   className="w-full bg-white border border-purple-200 rounded-xl px-3 py-2 text-sm font-bold text-purple-600 focus:ring-2 focus:ring-purple-500/20 focus:border-purple-500"
                 />
@@ -458,3 +553,4 @@ export const DailyLogModal: React.FC<DailyLogModalProps> = ({
     </div>
   );
 };
+
