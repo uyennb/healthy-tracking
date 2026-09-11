@@ -426,7 +426,7 @@ export function App() {
       />
 
       {/* Main Container */}
-      <main className="max-w-xl mx-auto px-3.5 pt-4">
+      <main className="app-main-container max-w-xl mx-auto px-3.5 pt-4">
         {activeTab === 'profile' && (
           /* Profile Tab */
           <ProfileView

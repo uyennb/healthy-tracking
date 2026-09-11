@@ -22,7 +22,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({
 
   return (
     <div className="fixed bottom-0 left-0 right-0 z-40 bg-white/95 backdrop-blur-lg border-t border-slate-200 shadow-[0_-4px_20px_rgba(0,0,0,0.05)] px-3 py-2">
-      <div className="max-w-md mx-auto flex items-center justify-around relative">
+      <div className="app-bottom-nav-container max-w-md mx-auto flex items-center justify-around relative">
         {/* Dashboard tab */}
         <button
           onClick={() => onChangeTab('dashboard')}
