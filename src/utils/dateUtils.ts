@@ -184,7 +184,7 @@ export function calculateSummary(logs: DailyLog[]) {
 export function formatDateLang(dateStr: string, lang: Language = 'vi'): string {
   try {
     const loc = lang === 'en' ? enUS : vi;
-    return format(parseISO(dateStr), lang === 'en' ? 'dd/MM/yyyy (EEE)' : 'dd/MM/yyyy (EEEE)', { locale: loc });
+    return format(parseISO(dateStr), 'dd/MM/yyyy (EEE)', { locale: loc });
   } catch {
     return dateStr;
   }
